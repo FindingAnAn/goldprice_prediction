@@ -1,0 +1,500 @@
+x-common-config: &common-config
+  restart: unless-stopped
+  networks:
+    - mlops-network
+  env_file:
+    - .env
+
+networks:
+  mlops-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+  airflow_dags:
+  airflow_logs:
+  airflow_plugins:
+  mlflow_data:
+  minio_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  elasticsearch_data:
+
+services:
+  # PostgreSQL Database
+  postgres:
+    <<: *common-config
+    image: postgres:16-alpine
+    container_name: churn-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+      POSTGRES_MULTIPLE_DATABASES: "airflow,mlflow,feature_store"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh
+    ports:
+      - "5432:5432"
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    <<: *common-config
+    image: redis:7-alpine
+    container_name: churn-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.20
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO (S3 Compatible)
+  minio:
+    <<: *common-config
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z   # pin version, never use :latest
+    container_name: churn-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.30
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # MLflow Tracking Server
+  mlflow:
+    <<: *common-config
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    container_name: churn-mlflow
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MLFLOW_S3_IGNORE_TLS: "true"
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_DB: postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/mlflow
+    volumes:
+      - mlflow_data:/mlflow
+      - ./mlflow:/app/mlflow
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.40
+    command: >
+      bash -c "
+      mlflow server \
+        --backend-store-uri $${MLFLOW_DB} \
+        --default-artifact-root s3://mlflow-artifacts/ \
+        --host 0.0.0.0 \
+        --port 5000
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Airflow Services
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: churn-airflow-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      _AIRFLOW_WWW_USER_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@example.com}
+      _AIRFLOW_WWW_USER_FIRSTNAME: Admin
+      _AIRFLOW_WWW_USER_LASTNAME: User
+      _AIRFLOW_WWW_USER_ROLE: Admin
+    volumes:
+      - airflow_dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+      - airflow_plugins:/opt/airflow/plugins
+      - ./dags:/opt/airflow/dags/local
+      - ./src:/opt/airflow/src
+      - ./config:/opt/airflow/config
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow db upgrade &&
+      airflow users create \
+        --username $${_AIRFLOW_WWW_USER_USERNAME} \
+        --password $${_AIRFLOW_WWW_USER_PASSWORD} \
+        --firstname $${_AIRFLOW_WWW_USER_FIRSTNAME} \
+        --lastname $${_AIRFLOW_WWW_USER_LASTNAME} \
+        --role $${_AIRFLOW_WWW_USER_ROLE} \
+        --email $${_AIRFLOW_WWW_USER_EMAIL}
+      "
+    profiles: ["init"]
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.50
+
+  airflow-webserver:
+    <<: *common-config
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: churn-airflow-webserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__WEBSERVER__WORKERS: 4
+      AIRFLOW__WEBSERVER__WORKER_REFRESH_INTERVAL: 1800
+    volumes:
+      - airflow_dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+      - airflow_plugins:/opt/airflow/plugins
+      - ./dags:/opt/airflow/dags/local
+      - ./src:/opt/airflow/src
+      - ./config:/opt/airflow/config
+      - /data/churn_prediction:/data/churn_prediction
+    ports:
+      - "8080:8080"
+    command: webserver
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.51
+
+  airflow-scheduler:
+    <<: *common-config
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: churn-airflow-scheduler
+    depends_on:
+      airflow-webserver:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 10
+    volumes:
+      - airflow_dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+      - airflow_plugins:/opt/airflow/plugins
+      - ./dags:/opt/airflow/dags/local
+      - ./src:/opt/airflow/src
+      - ./config:/opt/airflow/config
+      - /data/churn_prediction:/data/churn_prediction
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.52
+
+  airflow-worker:
+    <<: *common-config
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: churn-airflow-worker
+    depends_on:
+      airflow-scheduler:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__WORKER_CONCURRENCY: 8
+    volumes:
+      - airflow_dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+      - airflow_plugins:/opt/airflow/plugins
+      - ./dags:/opt/airflow/dags/local
+      - ./src:/opt/airflow/src
+      - ./config:/opt/airflow/config
+      - /data/churn_prediction:/data/churn_prediction
+      - ./models:/opt/airflow/models
+    command: celery worker
+    healthcheck:
+      test: ["CMD-SHELL", "celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.53
+    deploy:
+      replicas: 2
+
+  # FastAPI Model Serving
+  model-api:
+    <<: *common-config
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: churn-model-api
+    environment:
+      MODEL_PATH: /app/models/production/model.pkl
+      FEATURE_STORE_PATH: /app/feature_store
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      REDIS_URL: redis://redis:6379/0
+      API_KEY: ${API_KEY}
+      LOG_LEVEL: INFO
+    volumes:
+      - ./models:/app/models
+      - ./src:/app/src
+      - ./config:/app/config
+    ports:
+      - "8000:8000"
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      bash -c "
+      uvicorn src.api.app:app \
+        --host 0.0.0.0 \
+        --port 8000 \
+        --workers 4 \
+        --log-level info
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.60
+
+  # Monitoring Stack
+  prometheus:
+    <<: *common-config
+    image: prom/prometheus:v2.53.0     # pin version, never use :latest
+    container_name: churn-prometheus
+    volumes:
+      - prometheus_data:/prometheus
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts:/etc/prometheus/alerts:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.70
+
+  grafana:
+    <<: *common-config
+    image: grafana/grafana:11.2.0      # pin version, never use :latest
+    container_name: churn-grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.71
+
+  alertmanager:
+    <<: *common-config
+    image: prom/alertmanager:v0.27.0   # pin version, never use :latest
+    container_name: churn-alertmanager
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    ports:
+      - "9093:9093"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.72
+
+  # Elasticsearch + Kibana for Logs
+  elasticsearch:
+    <<: *common-config
+    image: elasticsearch:8.15.0
+    container_name: churn-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=false
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.80
+
+  kibana:
+    <<: *common-config
+    image: kibana:8.15.0
+    container_name: churn-kibana
+    environment:
+      ELASTICSEARCH_HOSTS: '["http://elasticsearch:9200"]'
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.81
+
+  # Utility Services
+  pgadmin:
+    <<: *common-config
+    image: dpage/pgadmin4:8.12
+    container_name: churn-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+    volumes:
+      - ./infrastructure/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/misc/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.90
+
+  flower:
+    <<: *common-config
+    image: mher/flower:2.0.1
+    container_name: churn-flower
+    command: celery flower
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+      airflow-worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5555/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      mlops-network:
+        ipv4_address: 172.20.0.91
