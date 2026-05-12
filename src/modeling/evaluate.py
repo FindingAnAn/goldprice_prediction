@@ -25,6 +25,15 @@ class EvalResult:
 
 
 def compute_metrics(y_true: pd.Series | list[float], y_pred: pd.Series | list[float]) -> EvalResult:
+    """Compute regression evaluation metrics.
+
+    Args:
+        y_true: Ground truth values.
+        y_pred: Predicted values.
+
+    Returns:
+        EvalResult containing RMSE, MAE, and R² scores.
+    """
     rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
     mae = float(mean_absolute_error(y_true, y_pred))
     r2 = float(r2_score(y_true, y_pred))
@@ -32,13 +41,37 @@ def compute_metrics(y_true: pd.Series | list[float], y_pred: pd.Series | list[fl
 
 
 def evaluate_model(model: object, X: pd.DataFrame, y: pd.Series) -> EvalResult:
+    """Evaluate a fitted model on given features and target.
+
+    Args:
+        model: Fitted model with a ``predict`` method.
+        X: Feature DataFrame.
+        y: Target Series.
+
+    Returns:
+        EvalResult containing RMSE, MAE, and R² scores.
+    """
     predictions = model.predict(X.to_numpy())
     result = compute_metrics(y, predictions)
-    logger.info("Evaluation metrics - RMSE: %.4f | MAE: %.4f | R2: %.4f", result.rmse, result.mae, result.r2)
+    logger.info(
+        "Evaluation metrics computed",
+        extra={"rmse": f"{result.rmse:.4f}", "mae": f"{result.mae:.4f}", "r2": f"{result.r2:.4f}"},
+    )
     return result
 
 
 def rank_results(results: list[tuple[str, EvalResult]]) -> tuple[str, EvalResult]:
+    """Return the best model result by lowest RMSE.
+
+    Args:
+        results: List of (model_name, EvalResult) tuples.
+
+    Returns:
+        Tuple of (best_model_name, best_EvalResult).
+
+    Raises:
+        ValueError: If *results* is empty.
+    """
     if not results:
         raise ValueError("No results to rank")
     return min(results, key=lambda item: item[1].rmse)

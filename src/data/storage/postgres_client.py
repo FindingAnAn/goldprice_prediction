@@ -15,7 +15,6 @@ Functions:
 
 from __future__ import annotations
 
-import os
 import re
 from datetime import date
 from pathlib import Path
@@ -27,6 +26,7 @@ from psycopg2.extras import execute_values
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from config.settings import DatabaseConfig
 from src.utils.config_loader import SQL_DIR, PG_SCHEMA_RAW, PG_SCHEMA_STAGING, PG_SCHEMA_FEATURES
 from src.utils.logging_config import get_logger
 
@@ -38,37 +38,37 @@ logger = get_logger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_engine() -> Engine:
-    """Tạo SQLAlchemy engine từ biến môi trường trong .env.
+    """Tạo SQLAlchemy engine từ ``DatabaseConfig``.
 
-    Đọc: DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME.
+    Config được đọc tập trung từ ``config.settings.DatabaseConfig.from_env()``
+    thay vì gọi ``os.getenv()`` rải rác (Luật 2.1).
 
     Returns:
         sqlalchemy.engine.Engine kết nối tới PostgreSQL.
-
-    Raises:
-        KeyError: Nếu thiếu biến môi trường bắt buộc.
     """
-    host     = os.getenv("DB_HOST", "127.0.0.1")
-    port     = os.getenv("DB_PORT", "5432")
-    user     = os.getenv("DB_USER", "postgres")
-    password = os.getenv("DB_PASSWORD", "")
-    dbname   = os.getenv("DB_NAME", "postgres")
-
-    url = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}"
-    engine = create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=10)
-    logger.info("PG engine created", extra={"host": host, "port": port, "db": dbname})
+    db_config = DatabaseConfig.from_env()
+    engine = create_engine(
+        db_config.sqlalchemy_url,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+    )
+    logger.info(
+        "PG engine created",
+        extra={"host": db_config.host, "port": db_config.port, "db": db_config.dbname},
+    )
     return engine
 
 
 def get_connection_params() -> dict:
-    """Trả về dict params cho psycopg2.connect()."""
-    return {
-        "host":     os.getenv("DB_HOST", "127.0.0.1"),
-        "port":     int(os.getenv("DB_PORT", "5432")),
-        "user":     os.getenv("DB_USER", "postgres"),
-        "password": os.getenv("DB_PASSWORD", ""),
-        "dbname":   os.getenv("DB_NAME", "postgres"),
-    }
+    """Trả về dict params cho ``psycopg2.connect()``.
+
+    Đọc từ ``DatabaseConfig.from_env()`` để tập trung quản lý config.
+
+    Returns:
+        Dict với keys: host, port, user, password, dbname.
+    """
+    return DatabaseConfig.from_env().to_psycopg2_params()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -168,7 +168,7 @@ def ensure_schemas() -> None:
         with conn.cursor() as cur:
             for schema in schemas:
                 cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
-                logger.info(f"Schema đảm bảo tồn tại: {schema}")
+                logger.info("Schema ensured", extra={"schema": schema})
 
 
 def execute_sql_file(path: str | Path) -> None:
@@ -266,7 +266,7 @@ def raw_table_needs_update(schema: str, table: str) -> bool:
         True nếu cần ingest/update, False nếu đã cập nhật hôm nay.
     """
     if not table_exists(schema, table):
-        logger.info(f"{schema}.{table} chưa tồn tại → cần tạo và ingest")
+        logger.info("Table not found, needs creation", extra={"schema": schema, "table": table})
         return True
 
     engine = get_engine()
@@ -281,7 +281,7 @@ def raw_table_needs_update(schema: str, table: str) -> bool:
         ), {"schema": schema, "table": table}).scalar()
 
         if not has_col:
-            logger.info(f"{schema}.{table} không có cột updated_at → ingest")
+            logger.info("Table has no updated_at column", extra={"schema": schema, "table": table})
             return True
 
         result = conn.execute(
@@ -290,7 +290,7 @@ def raw_table_needs_update(schema: str, table: str) -> bool:
 
         row_count, last_updated = result
         if row_count == 0:
-            logger.info(f"{schema}.{table} trống → cần ingest")
+            logger.info("Table is empty, needs ingest", extra={"schema": schema, "table": table})
             return True
 
         today = date.today()
@@ -299,10 +299,10 @@ def raw_table_needs_update(schema: str, table: str) -> bool:
 
         last_date = last_updated.date() if hasattr(last_updated, 'date') else last_updated
         if last_date >= today:
-            logger.info(f"{schema}.{table} đã được ingest hôm nay ({last_date}) → bỏ qua")
+            logger.info("Table already ingested today, skipping", extra={"schema": schema, "table": table, "last_date": str(last_date)})
             return False
         else:
-            logger.info(f"{schema}.{table} cần ingest lại (last: {last_date}, today: {today})")
+            logger.info("Table needs re-ingest", extra={"schema": schema, "table": table, "last_date": str(last_date), "today": str(today)})
             return True
 
 
@@ -347,15 +347,18 @@ def _run_ordered_sql_dir(directory: Path, label: str) -> None:
         return
 
     logger.info(
-        f"Bắt đầu pipeline [{label}]",
-        extra={"file_count": len(sql_files)},
+        "SQL pipeline started",
+        extra={"label": label, "file_count": len(sql_files)},
     )
 
     for i, sql_file in enumerate(sql_files, 1):
-        logger.info(f"[{label}] [{i}/{len(sql_files)}] Chạy: {sql_file.name}")
+        logger.info(
+            "Executing SQL file",
+            extra={"label": label, "step": f"{i}/{len(sql_files)}", "file": sql_file.name},
+        )
         execute_sql_file(sql_file)
 
-    logger.info(f"Pipeline [{label}] hoàn tất", extra={"total": len(sql_files)})
+    logger.info("SQL pipeline completed", extra={"label": label, "total": len(sql_files)})
 
 
 def table_exists(schema: str, table: str) -> bool:

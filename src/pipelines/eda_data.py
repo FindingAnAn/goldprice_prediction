@@ -24,7 +24,14 @@ class EDADataBundle:
 
 
 def load_master_features(limit: int | None = None) -> pd.DataFrame:
-    """Load features.master_features ordered by date."""
+    """Load features.master_features ordered by date.
+
+    Args:
+        limit: Maximum number of rows to return. None returns all.
+
+    Returns:
+        pd.DataFrame indexed by 'date' with all master feature columns.
+    """
     engine = get_engine()
     limit_clause = f"LIMIT {limit}" if limit is not None else ""
     query = f"""
@@ -38,7 +45,16 @@ def load_master_features(limit: int | None = None) -> pd.DataFrame:
 
 
 def load_target_labels(limit: int | None = None) -> pd.DataFrame:
-    """Load features.target_labels ordered by date."""
+    """Load features.target_labels ordered by date.
+
+    Only rows where ``next_1_day_price`` is not NULL are included.
+
+    Args:
+        limit: Maximum number of rows to return. None returns all.
+
+    Returns:
+        pd.DataFrame indexed by 'date' with target label columns.
+    """
     engine = get_engine()
     limit_clause = f"LIMIT {limit}" if limit is not None else ""
     query = f"""
@@ -53,12 +69,28 @@ def load_target_labels(limit: int | None = None) -> pd.DataFrame:
 
 
 def combine_with_targets(master_features: pd.DataFrame, target_labels: pd.DataFrame) -> pd.DataFrame:
-    """Join master features and target labels on date."""
+    """Join master features and target labels on date.
+
+    Args:
+        master_features: Feature DataFrame indexed by date.
+        target_labels: Target label DataFrame indexed by date.
+
+    Returns:
+        Inner-joined DataFrame containing both features and targets.
+    """
     return master_features.join(target_labels, how="inner")
 
 
 def summarize_missing_values(df: pd.DataFrame) -> pd.DataFrame:
-    """Return missing count and percentage per column."""
+    """Return missing count and percentage per column.
+
+    Args:
+        df: DataFrame to analyse.
+
+    Returns:
+        pd.DataFrame with columns 'missing_count' and 'missing_pct',
+        filtered to columns that have at least one missing value.
+    """
     missing = df.isna().sum()
     missing_pct = (missing / len(df) * 100).round(2)
     summary = pd.DataFrame({"missing_count": missing, "missing_pct": missing_pct})
@@ -67,7 +99,12 @@ def summarize_missing_values(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_eda_bundle() -> EDADataBundle:
-    """Load the EDA tables and derived summaries."""
+    """Load the EDA tables and derived summaries.
+
+    Returns:
+        EDADataBundle with master_features, target_labels, combined frame,
+        and a missing-values summary.
+    """
     master_features = load_master_features()
     target_labels = load_target_labels()
     combined = combine_with_targets(master_features, target_labels)

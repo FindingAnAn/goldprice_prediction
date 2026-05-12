@@ -189,6 +189,40 @@ CREATE TABLE IF NOT EXISTS features.sliding_windows (
 );
 
 -- ---------------------------------------------------------------------------
+-- features.ewma_features
+-- Exponential Weighted Moving Average: 7d, 30d, 90d, 365d (calendar days)
+-- alpha = 2 / (span + 1) với span ≈ trading days
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS features.ewma_features (
+    date                DATE             NOT NULL PRIMARY KEY,
+
+    -- EWMA Price (calendar day windows → trading day span)
+    ewma_7d             DOUBLE PRECISION,   -- span=5,  alpha=2/6
+    ewma_30d            DOUBLE PRECISION,   -- span=21, alpha=2/22
+    ewma_90d            DOUBLE PRECISION,   -- span=63, alpha=2/64
+    ewma_365d           DOUBLE PRECISION,   -- span=252, alpha=2/253
+
+    -- EWMA Volume
+    ewma_vol_7d         DOUBLE PRECISION,
+    ewma_vol_30d        DOUBLE PRECISION,
+    ewma_vol_90d        DOUBLE PRECISION,
+    ewma_vol_365d       DOUBLE PRECISION,
+
+    -- Price vs EWMA distance (%): > 0 = bullish, < 0 = bearish
+    price_vs_ewma_7d    DOUBLE PRECISION,
+    price_vs_ewma_30d   DOUBLE PRECISION,
+    price_vs_ewma_90d   DOUBLE PRECISION,
+    price_vs_ewma_365d  DOUBLE PRECISION,
+
+    -- EWMA Crossover signals: +1 = bullish (short > long), -1 = bearish
+    ewma_cross_7_30     DOUBLE PRECISION,   -- ewma_7d  vs ewma_30d
+    ewma_cross_30_90    DOUBLE PRECISION,   -- ewma_30d vs ewma_90d
+    ewma_cross_90_365   DOUBLE PRECISION,   -- ewma_90d vs ewma_365d
+
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
 -- features.target_labels  (TÁCH RIÊNG — không join vào master_features)
 -- Chứa target variables: next N-day price/direction/change
 -- ---------------------------------------------------------------------------
@@ -218,14 +252,17 @@ CREATE TABLE IF NOT EXISTS features.target_labels (
 
 -- ---------------------------------------------------------------------------
 -- features.master_features
--- JOIN tất cả features — KHÔNG chứa target labels (anti-leakage)
+-- JOIN tất cả features — KHÔNG chứa target labels (anti-leakage).
+--
+-- Anti-leakage design:
+--   gold_close / gold_open: KHÔNG lưu ở đây — chỉ tồn tại trong target_labels
+--                            và staging.daily_master. Dùng làm label khi training.
+--   gold_high / gold_low / gold_volume: GIỮ LẠI — thông tin trong ngày hợp lệ.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS features.master_features (
     date                DATE             NOT NULL PRIMARY KEY,
 
-    -- From staging.daily_master (raw values)
-    gold_close          DOUBLE PRECISION,
-    gold_open           DOUBLE PRECISION,
+    -- From staging.daily_master (high/low/volume only — close/open are labels)
     gold_high           DOUBLE PRECISION,
     gold_low            DOUBLE PRECISION,
     gold_volume         DOUBLE PRECISION,
@@ -303,6 +340,23 @@ CREATE TABLE IF NOT EXISTS features.master_features (
     gold_pct_chg_63d    DOUBLE PRECISION,
     gold_avg_252d       DOUBLE PRECISION,
     gold_pct_chg_252d   DOUBLE PRECISION,
+
+    -- EWMA Features (7d / 30d / 90d / 365d calendar)
+    ewma_7d             DOUBLE PRECISION,
+    ewma_30d            DOUBLE PRECISION,
+    ewma_90d            DOUBLE PRECISION,
+    ewma_365d           DOUBLE PRECISION,
+    ewma_vol_7d         DOUBLE PRECISION,
+    ewma_vol_30d        DOUBLE PRECISION,
+    ewma_vol_90d        DOUBLE PRECISION,
+    ewma_vol_365d       DOUBLE PRECISION,
+    price_vs_ewma_7d    DOUBLE PRECISION,
+    price_vs_ewma_30d   DOUBLE PRECISION,
+    price_vs_ewma_90d   DOUBLE PRECISION,
+    price_vs_ewma_365d  DOUBLE PRECISION,
+    ewma_cross_7_30     DOUBLE PRECISION,
+    ewma_cross_30_90    DOUBLE PRECISION,
+    ewma_cross_90_365   DOUBLE PRECISION,
 
     updated_at          TIMESTAMPTZ DEFAULT NOW()
 );

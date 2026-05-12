@@ -111,3 +111,62 @@ EIA_YFINANCE_FALLBACK = {
     "RWTC":  "CL=F",   # WTI futures
     "RBRTE": "BZ=F",   # Brent futures
 }
+
+
+# ─────────────────────────────────────────────
+# 8. DATABASE CONFIG
+# ─────────────────────────────────────────────
+import os
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class DatabaseConfig:
+    """Typed database configuration loaded from environment variables.
+
+    All database-related ``os.getenv()`` calls are centralised here
+    so that no other module needs to read raw environment variables.
+
+    Args:
+        host: PostgreSQL host address.
+        port: PostgreSQL port number.
+        user: Database user name.
+        password: Database password.
+        dbname: Database name.
+    """
+
+    host: str = "127.0.0.1"
+    port: int = 5432
+    user: str = "postgres"
+    password: str = ""
+    dbname: str = "postgres"
+
+    @classmethod
+    def from_env(cls) -> "DatabaseConfig":
+        """Create a DatabaseConfig by reading DB_* environment variables.
+
+        Returns:
+            DatabaseConfig populated from the environment.
+        """
+        return cls(
+            host=os.getenv("DB_HOST", "127.0.0.1"),
+            port=int(os.getenv("DB_PORT", "5432")),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", ""),
+            dbname=os.getenv("DB_NAME", "postgres"),
+        )
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        """Return a ``postgresql+psycopg2://`` connection URL."""
+        return f"postgresql+psycopg2://{self.user}:{self.password}@{self.host}:{self.port}/{self.dbname}"
+
+    def to_psycopg2_params(self) -> dict:
+        """Return a dict suitable for ``psycopg2.connect(**params)``."""
+        return {
+            "host": self.host,
+            "port": self.port,
+            "user": self.user,
+            "password": self.password,
+            "dbname": self.dbname,
+        }

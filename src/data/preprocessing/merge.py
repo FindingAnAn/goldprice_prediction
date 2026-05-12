@@ -1,5 +1,5 @@
 """
-src/data/preproccessing/merge.py
+src/data/preprocessing/merge.py
 ==================================
 Time format standardization. merge.py giờ chỉ được dùng làm
 utility (normalize_datetime) — pipeline chính dùng SQL/PostgreSQL.
@@ -29,6 +29,9 @@ def normalize_datetime(df: pd.DataFrame) -> pd.DataFrame:
 
     Returns:
         pd.DataFrame với DatetimeIndex (tz-naive, name='date', sorted asc).
+
+    Raises:
+        ValueError: Nếu không tìm thấy cột date-like.
     """
     if df is None or df.empty:
         return df

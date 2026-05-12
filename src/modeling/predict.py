@@ -22,9 +22,20 @@ PRED_DIR = Path("data/predictions")
 PRED_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def load_best_model(path: Path | None = None):
+def load_best_model(path: Path | None = None) -> object:
+    """Load a persisted model from disk.
+
+    Args:
+        path: Path to the model file. Defaults to ``models/best_model.joblib``.
+
+    Returns:
+        The deserialized model object (typically a scikit-learn estimator).
+
+    Raises:
+        FileNotFoundError: If the model file does not exist.
+    """
     model_path = Path(path) if path is not None else MODELS_DIR / "best_model.joblib"
-    logger.info("Loading model from %s", model_path)
+    logger.info("Loading model", extra={"path": str(model_path)})
     return joblib.load(model_path)
 
 

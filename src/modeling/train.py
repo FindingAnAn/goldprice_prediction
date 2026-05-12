@@ -38,7 +38,25 @@ class TrainResult:
     params: dict[str, object]
 
 
-def time_series_train_test_split(df: pd.DataFrame, test_size: float = 0.2) -> tuple[pd.DataFrame, pd.DataFrame]:
+def time_series_train_test_split(
+    df: pd.DataFrame,
+    test_size: float = 0.2,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split a time-ordered DataFrame into train/test without shuffling.
+
+    The split is chronological: the earliest ``1 - test_size`` fraction goes
+    to training and the remainder to testing.
+
+    Args:
+        df: DataFrame to split (must not be empty).
+        test_size: Fraction of rows for the test set.
+
+    Returns:
+        Tuple of (train_df, test_df).
+
+    Raises:
+        ValueError: If *df* is empty.
+    """
     if df.empty:
         raise ValueError("Cannot split an empty DataFrame")
 
@@ -62,6 +80,15 @@ def build_training_frame(
 
 
 def infer_feature_columns(df: pd.DataFrame, target_col: str) -> list[str]:
+    """Return all numeric columns except the target column.
+
+    Args:
+        df: DataFrame to inspect.
+        target_col: Column name to exclude from features.
+
+    Returns:
+        List of numeric column names suitable as model features.
+    """
     feature_cols: list[str] = []
     for column in df.columns:
         if column == target_col:
@@ -145,7 +172,7 @@ def tune_candidate(
     try:
         import optuna
     except Exception:
-        logger.info("optuna is unavailable; skipping tuning for %s", name)
+        logger.info("Optuna unavailable, skipping tuning", extra={"candidate": name})
         return model, {}
 
     def objective(trial: object) -> float:
@@ -267,7 +294,7 @@ def train_and_select_best(
     results: list[TrainResult] = []
     for name, model in candidates.items():
         try:
-            logger.info("Training candidate model: %s", name)
+            logger.info("Training candidate model", extra={"name": name})
             result = _fit_and_evaluate(
                 name=name,
                 model=model,
@@ -279,10 +306,10 @@ def train_and_select_best(
                 use_optuna=use_optuna,
                 tuning_trials=tuning_trials,
             )
-            logger.info("Candidate %s finished with CV RMSE %.4f", name, result.cv_rmse)
+            logger.info("Candidate finished", extra={"name": name, "cv_rmse": f"{result.cv_rmse:.4f}"})
             results.append(result)
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.exception("Candidate %s failed: %s", name, exc)
+            logger.exception("Candidate failed", extra={"name": name, "error": str(exc)})
 
     if not results:
         raise RuntimeError("No candidate models succeeded during training")
@@ -290,7 +317,10 @@ def train_and_select_best(
     best = min(results, key=lambda item: item.cv_rmse)
     joblib.dump(best.model, MODELS_DIR / f"best_model_{best.name}.joblib")
     joblib.dump(best.model, MODELS_DIR / "best_model.joblib")
-    logger.info("Selected best model: %s (CV RMSE %.4f, test RMSE %.4f)", best.name, best.cv_rmse, best.test_rmse)
+    logger.info(
+        "Selected best model",
+        extra={"name": best.name, "cv_rmse": f"{best.cv_rmse:.4f}", "test_rmse": f"{best.test_rmse:.4f}"},
+    )
     return best
 
 

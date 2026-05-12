@@ -2,14 +2,21 @@
 -- sql/features/08_master_features.sql
 -- Populate features.master_features = JOIN tất cả feature tables.
 -- KHÔNG bao gồm features.target_labels (anti-leakage).
+--
+-- Anti-leakage rules:
+--   gold_close  → KHÔNG đưa vào features (sẽ dùng làm label)
+--   gold_open   → KHÔNG đưa vào features (sẽ dùng làm label)
+--   gold_high   → GIỮ LẠI (thông tin range ngày, không phải future)
+--   gold_low    → GIỮ LẠI (thông tin range ngày, không phải future)
+--   gold_volume → GIỮ LẠI (thông tin giao dịch ngày)
 -- =============================================================================
 
 TRUNCATE features.master_features;
 
 INSERT INTO features.master_features (
     date,
-    -- Raw values
-    gold_close, gold_open, gold_high, gold_low, gold_volume,
+    -- Raw values (chỉ high/low/volume — close và open dùng làm target)
+    gold_high, gold_low, gold_volume,
     -- Price Indicators
     sma_10, sma_20, sma_50, sma_100, sma_200,
     ema_10, ema_20, ema_50, ema_100, ema_200,
@@ -34,12 +41,17 @@ INSERT INTO features.master_features (
     gold_avg_21d,  gold_pct_chg_21d,
     gold_avg_63d,  gold_pct_chg_63d,
     gold_avg_252d, gold_pct_chg_252d,
+    -- EWMA Features (7d / 30d / 90d / 365d calendar)
+    ewma_7d,    ewma_30d,    ewma_90d,    ewma_365d,
+    ewma_vol_7d, ewma_vol_30d, ewma_vol_90d, ewma_vol_365d,
+    price_vs_ewma_7d, price_vs_ewma_30d, price_vs_ewma_90d, price_vs_ewma_365d,
+    ewma_cross_7_30, ewma_cross_30_90, ewma_cross_90_365,
     updated_at
 )
 SELECT
     s.date,
-    -- Raw
-    s.gold_close, s.gold_open, s.gold_high, s.gold_low, s.gold_volume,
+    -- Raw (high/low/volume only — close/open used as labels, not features)
+    s.gold_high, s.gold_low, s.gold_volume,
     -- Price
     pi.sma_10, pi.sma_20, pi.sma_50, pi.sma_100, pi.sma_200,
     pi.ema_10, pi.ema_20, pi.ema_50, pi.ema_100, pi.ema_200,
@@ -59,11 +71,16 @@ SELECT
     -- Ratios
     rf.gold_silver_ratio, rf.gold_oil_ratio, rf.gold_sp500_ratio, rf.gold_dxy_ratio,
     rf.real_yield, rf.oil_spread,
-    -- Windows
+    -- Sliding Windows
     sw.gold_avg_5d,   sw.gold_pct_chg_5d,
     sw.gold_avg_21d,  sw.gold_pct_chg_21d,
     sw.gold_avg_63d,  sw.gold_pct_chg_63d,
     sw.gold_avg_252d, sw.gold_pct_chg_252d,
+    -- EWMA
+    ew.ewma_7d,    ew.ewma_30d,    ew.ewma_90d,    ew.ewma_365d,
+    ew.ewma_vol_7d, ew.ewma_vol_30d, ew.ewma_vol_90d, ew.ewma_vol_365d,
+    ew.price_vs_ewma_7d, ew.price_vs_ewma_30d, ew.price_vs_ewma_90d, ew.price_vs_ewma_365d,
+    ew.ewma_cross_7_30, ew.ewma_cross_30_90, ew.ewma_cross_90_365,
     NOW()
 FROM staging.daily_master                 s
 LEFT JOIN features.price_indicators      pi ON s.date = pi.date
@@ -72,6 +89,7 @@ LEFT JOIN features.trend_indicators      ti ON s.date = ti.date
 LEFT JOIN features.macro_features        mf ON s.date = mf.date
 LEFT JOIN features.ratio_features        rf ON s.date = rf.date
 LEFT JOIN features.sliding_windows       sw ON s.date = sw.date
+LEFT JOIN features.ewma_features         ew ON s.date = ew.date
 WHERE s.gold_close IS NOT NULL
   AND s.date >= '2000-01-01'
   AND s.is_outlier = FALSE   -- loại bỏ outlier rows

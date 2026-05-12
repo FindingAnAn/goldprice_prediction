@@ -1,5 +1,5 @@
 """
-src/data/preproccessing/cleaning.py
+src/data/preprocessing/cleaning.py
 =====================================
 Làm sạch dữ liệu raw trong PostgreSQL: dedup, fill missing, flag outlier.
 
@@ -24,7 +24,15 @@ logger = get_logger(__name__)
 
 
 def _execute_sql(sql: str, label: str = "") -> None:
-    """Chạy một SQL statement trực tiếp qua psycopg2."""
+    """Chạy một SQL statement trực tiếp qua psycopg2.
+
+    Args:
+        sql: SQL statement cần thực thi.
+        label: Nhãn mô tả ngắn cho log (nếu rỗng, không log).
+
+    Raises:
+        psycopg2.Error: Nếu SQL execution thất bại.
+    """
     conn_params = get_connection_params()
     with psycopg2.connect(**conn_params) as conn:
         conn.autocommit = False
@@ -32,7 +40,7 @@ def _execute_sql(sql: str, label: str = "") -> None:
             cur.execute(sql)
         conn.commit()
     if label:
-        logger.info(f"Cleaning SQL OK: {label}")
+        logger.info("Cleaning SQL executed", extra={"label": label})
 
 
 def remove_duplicates() -> None:
@@ -92,8 +100,8 @@ def remove_duplicates() -> None:
 def fill_missing_staging(max_gap_days: int = 3) -> None:
     """Forward-fill missing values trong staging.daily_master.
 
-    Dùng UPDATE ... FROM với LAG window để fill NULL tối đa `max_gap_days` ngày.
-    Chạy lặp `max_gap_days` lần để đảm bảo fill đủ.
+    Dùng UPDATE ... FROM với LAG window để fill NULL tối đa ``max_gap_days`` ngày.
+    Chạy lặp ``max_gap_days`` lần để đảm bảo fill đủ.
 
     Args:
         max_gap_days: Số ngày tối đa để forward-fill (mặc định 3).
@@ -178,7 +186,7 @@ def flag_outliers(z_threshold: float = 5.0) -> None:
             WHERE z > {z_threshold}
         )
     """
-    _execute_sql(sql, label=f"flag outliers z>{z_threshold}")
+    _execute_sql(sql, label="flag outliers")
 
 
 def run_cleaning_pipeline(max_gap_days: int = 3, z_threshold: float = 5.0) -> None:
@@ -190,15 +198,15 @@ def run_cleaning_pipeline(max_gap_days: int = 3, z_threshold: float = 5.0) -> No
         max_gap_days : Forward-fill tối đa N ngày.
         z_threshold  : Ngưỡng Z-score cho outlier flagging.
     """
-    logger.info("=== Bắt đầu Cleaning Pipeline ===")
+    logger.info("Cleaning pipeline started", extra={"max_gap_days": max_gap_days, "z_threshold": z_threshold})
 
-    logger.info("[1/3] Remove duplicates (raw tables)")
+    logger.info("Cleaning step started", extra={"step": "1/3", "action": "remove_duplicates"})
     remove_duplicates()
 
-    logger.info("[2/3] Fill missing (staging.daily_master)")
+    logger.info("Cleaning step started", extra={"step": "2/3", "action": "fill_missing_staging"})
     fill_missing_staging(max_gap_days=max_gap_days)
 
-    logger.info("[3/3] Flag outliers (staging.daily_master)")
+    logger.info("Cleaning step started", extra={"step": "3/3", "action": "flag_outliers"})
     flag_outliers(z_threshold=z_threshold)
 
-    logger.info("=== Cleaning Pipeline hoàn tất ===")
+    logger.info("Cleaning pipeline completed")
