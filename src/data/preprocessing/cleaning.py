@@ -106,52 +106,65 @@ def fill_missing_staging(max_gap_days: int = 3) -> None:
     Args:
         max_gap_days: Số ngày tối đa để forward-fill (mặc định 3).
     """
+    if max_gap_days < 0:
+        raise ValueError("max_gap_days must be non-negative")
+
     logger.info("Forward-fill staging.daily_master", extra={"max_gap_days": max_gap_days})
 
     # Dùng PostgreSQL để update từng cột có NULL bằng LAG
     # (chạy `max_gap_days` lần để fill chuỗi NULL dài)
-    ffill_sql = """
+    ffill_sql = f"""
         UPDATE staging.daily_master dm
         SET
             gold_close         = COALESCE(dm.gold_close,
                                    (SELECT d2.gold_close FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.gold_close IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1)),
             dxy_close          = COALESCE(dm.dxy_close,
                                    (SELECT d2.dxy_close FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.dxy_close IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1)),
             wti_oil_price      = COALESCE(dm.wti_oil_price,
                                    (SELECT d2.wti_oil_price FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.wti_oil_price IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1)),
             brent_oil_price    = COALESCE(dm.brent_oil_price,
                                    (SELECT d2.brent_oil_price FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.brent_oil_price IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1)),
             silver_close       = COALESCE(dm.silver_close,
                                    (SELECT d2.silver_close FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.silver_close IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1)),
             sp500_close        = COALESCE(dm.sp500_close,
                                    (SELECT d2.sp500_close FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.sp500_close IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1)),
             us_10y_yield       = COALESCE(dm.us_10y_yield,
                                    (SELECT d2.us_10y_yield FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.us_10y_yield IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1)),
             us_2y_yield        = COALESCE(dm.us_2y_yield,
                                    (SELECT d2.us_2y_yield FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.us_2y_yield IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1)),
             vix                = COALESCE(dm.vix,
                                    (SELECT d2.vix FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.vix IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1)),
             breakeven_inflation= COALESCE(dm.breakeven_inflation,
                                    (SELECT d2.breakeven_inflation FROM staging.daily_master d2
                                     WHERE d2.date < dm.date AND d2.breakeven_inflation IS NOT NULL
+                                      AND d2.date >= dm.date - {max_gap_days}
                                     ORDER BY d2.date DESC LIMIT 1))
         WHERE dm.gold_close IS NOT NULL  -- chỉ fill rows đã có gold price
     """

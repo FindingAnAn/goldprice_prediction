@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from config.settings import TARGET_COLUMN, TARGET_LABEL_COLUMNS
 from src.data.storage.postgres_client import get_engine
 
 
@@ -44,23 +45,30 @@ def load_master_features(limit: int | None = None) -> pd.DataFrame:
         return pd.read_sql(query, connection, index_col="date", parse_dates=["date"])
 
 
-def load_target_labels(limit: int | None = None) -> pd.DataFrame:
+def load_target_labels(
+    limit: int | None = None,
+    target_col: str = TARGET_COLUMN,
+) -> pd.DataFrame:
     """Load features.target_labels ordered by date.
 
-    Only rows where ``next_1_day_price`` is not NULL are included.
+    Only rows with a known value for ``target_col`` are included.
 
     Args:
         limit: Maximum number of rows to return. None returns all.
+        target_col: Target used to filter unavailable future labels.
 
     Returns:
         pd.DataFrame indexed by 'date' with target label columns.
     """
+    if target_col not in TARGET_LABEL_COLUMNS:
+        raise ValueError(f"Unsupported target column: {target_col!r}")
+
     engine = get_engine()
     limit_clause = f"LIMIT {limit}" if limit is not None else ""
     query = f"""
         SELECT *
         FROM features.target_labels
-        WHERE next_1_day_price IS NOT NULL
+        WHERE {target_col} IS NOT NULL
         ORDER BY date
         {limit_clause}
     """

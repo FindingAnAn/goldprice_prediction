@@ -53,7 +53,14 @@ def predict_frame(
         raise ValueError("feature_frame is empty")
 
     frame = feature_frame.sort_index().tail(latest_n).copy()
-    cols = feature_cols or list(frame.columns)
+    persisted_cols = getattr(model, "_gold_feature_cols", None)
+    cols = feature_cols or persisted_cols
+    if cols is None:
+        cols = [
+            column
+            for column in frame.columns
+            if pd.api.types.is_numeric_dtype(frame[column])
+        ]
     missing_cols = [column for column in cols if column not in frame.columns]
     if missing_cols:
         raise KeyError(f"Missing feature columns for prediction: {missing_cols}")

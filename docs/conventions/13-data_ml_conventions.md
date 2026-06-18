@@ -307,7 +307,7 @@ Choose the right tool based on data scale:
 
 - use `pandas` for data that fits comfortably in memory
 - use `polars` when performance on medium-sized data matters
-- use `pyspark` or `dask` for data that exceeds single-machine memory
+- use a distributed engine only when data exceeds single-machine memory
 - use chunked reading when streaming large files
 
 Do not load entire datasets into memory when only a subset or stream is needed.
@@ -317,7 +317,7 @@ Chọn công cụ phù hợp dựa trên quy mô dữ liệu:
 
 - dùng `pandas` khi data vừa đủ trong bộ nhớ
 - dùng `polars` khi hiệu suất với data cỡ vừa quan trọng
-- dùng `pyspark` hoặc `dask` khi data vượt bộ nhớ một máy
+- dùng distributed engine khi data vượt bộ nhớ một máy
 - dùng đọc theo chunk khi stream file lớn
 
 Không được load toàn bộ dataset vào bộ nhớ khi chỉ cần một phần hoặc có thể stream.

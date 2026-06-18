@@ -25,7 +25,7 @@ from src.data.storage.postgres_client import (
     run_feature_pipeline,
     run_schema_pipeline,
 )
-from src.utils.config_loader import DATA_START_DATE, SQL_DIR
+from src.utils.config_loader import DATA_END_DATE, DATA_START_DATE, SQL_DIR
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -63,13 +63,16 @@ def prepare_database_schema() -> None:
     run_schema_pipeline()
 
 
-def ingest_raw_sources(start: str = DATA_START_DATE) -> tuple[int, dict[str, int], dict[str, int], dict[str, int], dict[str, int]]:
+def ingest_raw_sources(
+    start: str = DATA_START_DATE,
+    end: str | None = DATA_END_DATE,
+) -> tuple[int, dict[str, int], dict[str, int], dict[str, int], dict[str, int]]:
     """Run the raw source ingestion steps."""
-    gold_rows = ingest_gold_prices(start=start)
-    yfinance_rows = ingest_yfinance_all(start=start)
-    fred_daily_rows = ingest_fred_daily(start=start)
-    fred_monthly_rows = ingest_fred_monthly(start=start)
-    eia_rows = ingest_eia_with_fallback(start=start)
+    gold_rows = ingest_gold_prices(start=start, end=end)
+    yfinance_rows = ingest_yfinance_all(start=start, end=end)
+    fred_daily_rows = ingest_fred_daily(start=start, end=end)
+    fred_monthly_rows = ingest_fred_monthly(start=start, end=end)
+    eia_rows = ingest_eia_with_fallback(start=start, end=end)
     return gold_rows, yfinance_rows, fred_daily_rows, fred_monthly_rows, eia_rows
 
 
@@ -166,14 +169,18 @@ def render_ingestion_report(report: IngestionReport) -> None:
 
 def run_ingestion_pipeline(
     start: str = DATA_START_DATE,
+    end: str | None = DATA_END_DATE,
     max_gap_days: int = 3,
     z_threshold: float = 5.0,
 ) -> IngestionReport:
     """Run the end-to-end ingestion pipeline."""
-    logger.info("Starting ingestion pipeline", extra={"start": start})
+    logger.info("Starting ingestion pipeline", extra={"start": start, "end": end})
 
     prepare_database_schema()
-    gold_rows, yfinance_rows, fred_daily_rows, fred_monthly_rows, eia_rows = ingest_raw_sources(start=start)
+    gold_rows, yfinance_rows, fred_daily_rows, fred_monthly_rows, eia_rows = ingest_raw_sources(
+        start=start,
+        end=end,
+    )
     staging_rows = populate_staging_daily_master()
     run_cleaning(max_gap_days=max_gap_days, z_threshold=z_threshold)
     feature_rows = run_feature_engineering()

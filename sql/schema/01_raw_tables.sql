@@ -58,7 +58,7 @@ CREATE INDEX IF NOT EXISTS idx_fred_daily_series_id ON raw.fred_daily (series_id
 
 -- ---------------------------------------------------------------------------
 -- raw.fred_monthly
--- FRED monthly series (CPI, FEDFUNDS, M2, UNRATE, USINTR, ...)
+-- FRED monthly series (CPI, FEDFUNDS, M2, UNRATE, retail sales, ...)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS raw.fred_monthly (
     date       DATE             NOT NULL,   -- ngày đầu tháng (YYYY-MM-01)

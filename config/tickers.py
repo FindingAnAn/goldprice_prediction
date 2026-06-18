@@ -27,6 +27,7 @@ YFINANCE_TICKERS = {
     # Currencies & Rates
     "DX-Y.NYB": "DXY_Close",           # US Dollar Index (ICE)
     "^TNX":     "US_10Y_Yield_YF",     # US 10Y Treasury Yield (Yahoo)
+    "^TYX":     "US_30Y_Yield_YF",     # US 30Y Treasury Yield (Yahoo)
 }
 
 # ─────────────────────────────────────────────

@@ -160,7 +160,7 @@ def plot_correlation_heatmap(df: pd.DataFrame, show: bool = True) -> plt.Figure:
         "gold_oil_ratio",
         "gold_pct_chg_5d",
         "gold_pct_chg_21d",
-        "next_1_day_price_change",
+        "next_7_day_price_change",
     ]
     available = [column for column in key_features if column in df.columns]
 

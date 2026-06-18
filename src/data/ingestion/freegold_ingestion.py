@@ -14,7 +14,6 @@ Functions:
 
 from __future__ import annotations
 
-from datetime import datetime, date
 from io import StringIO
 
 import pandas as pd
@@ -22,6 +21,7 @@ import requests
 import yfinance as yf
 
 from src.utils.config_loader import (
+    DATA_END_DATE,
     FREEGOLD_URLS,
     DATA_START_DATE,
     PG_SCHEMA_RAW,
@@ -39,6 +39,7 @@ logger = get_logger(__name__)
 def fetch_freegoldapi(
     source: str = "latest",
     start: str = DATA_START_DATE,
+    end: str | None = DATA_END_DATE,
 ) -> pd.DataFrame:
     """Download FreeGoldAPI dataset và trả về DataFrame daily từ `start`.
 
@@ -82,6 +83,8 @@ def fetch_freegoldapi(
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=["date"])
     df = df[df["date"] >= start].copy()
+    if end is not None:
+        df = df[df["date"] <= end].copy()
 
     # Chỉ giữ daily rows (bỏ monthly trước 2000)
     result = pd.DataFrame({
@@ -102,7 +105,10 @@ def fetch_freegoldapi(
 # 2. FETCH GOLD FROM YFINANCE (GC=F)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fetch_gold_yfinance(start: str = DATA_START_DATE) -> pd.DataFrame:
+def fetch_gold_yfinance(
+    start: str = DATA_START_DATE,
+    end: str | None = DATA_END_DATE,
+) -> pd.DataFrame:
     """Fetch Gold Futures (GC=F) daily close từ yfinance.
 
     yfinance là nguồn cập nhật đến hôm nay (FreeGoldAPI có thể lag vài ngày).
@@ -117,7 +123,15 @@ def fetch_gold_yfinance(start: str = DATA_START_DATE) -> pd.DataFrame:
     logger.info("Fetching GC=F từ yfinance", extra={"start": start})
 
     try:
-        raw = yf.download("GC=F", start=start, auto_adjust=True, progress=False)
+        from src.data.ingestion.yfinance_ingestion import _exclusive_yfinance_end
+
+        raw = yf.download(
+            "GC=F",
+            start=start,
+            end=_exclusive_yfinance_end(end),
+            auto_adjust=True,
+            progress=False,
+        )
         if raw.empty:
             logger.warning("yfinance GC=F trả về DataFrame rỗng")
             return pd.DataFrame(columns=["date", "price", "source"])
@@ -143,7 +157,10 @@ def fetch_gold_yfinance(start: str = DATA_START_DATE) -> pd.DataFrame:
 # 3. ORCHESTRATE + UPSERT
 # ─────────────────────────────────────────────────────────────────────────────
 
-def ingest_gold_prices(start: str = DATA_START_DATE) -> int:
+def ingest_gold_prices(
+    start: str = DATA_START_DATE,
+    end: str | None = DATA_END_DATE,
+) -> int:
     """Fetch FreeGoldAPI + yfinance GC=F và upsert vào raw.gold_prices.
 
     Ưu tiên: FreeGoldAPI cho lịch sử, yfinance cho data mới nhất.
@@ -160,7 +177,7 @@ def ingest_gold_prices(start: str = DATA_START_DATE) -> int:
 
     # FreeGoldAPI
     try:
-        df_fg = fetch_freegoldapi(source="latest", start=start)
+        df_fg = fetch_freegoldapi(source="latest", start=start, end=end)
         if not df_fg.empty:
             n = upsert_dataframe(
                 df_fg,
@@ -174,7 +191,7 @@ def ingest_gold_prices(start: str = DATA_START_DATE) -> int:
 
     # yfinance GC=F
     try:
-        df_yf = fetch_gold_yfinance(start=start)
+        df_yf = fetch_gold_yfinance(start=start, end=end)
         if not df_yf.empty:
             n = upsert_dataframe(
                 df_yf,

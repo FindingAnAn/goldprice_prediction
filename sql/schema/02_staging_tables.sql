@@ -51,8 +51,8 @@ CREATE TABLE IF NOT EXISTS staging.daily_master (
     core_cpi            DOUBLE PRECISION,   -- CPILFESL
     unemployment_rate   DOUBLE PRECISION,   -- UNRATE
     m2_money_supply     DOUBLE PRECISION,   -- M2SL
-    us_interest_rate    DOUBLE PRECISION,   -- USINTR  → usintr
-    us_inflation_yoy    DOUBLE PRECISION,   -- FPCPITOTLZGUSA → usiryy
+    us_interest_rate    DOUBLE PRECISION,   -- deprecated source; kept for schema compatibility
+    us_inflation_yoy    DOUBLE PRECISION,   -- deprecated source; kept for schema compatibility
     retail_sales        DOUBLE PRECISION,   -- RSXFS
 
     -- ── Metadata ──────────────────────────────────────────────────────────

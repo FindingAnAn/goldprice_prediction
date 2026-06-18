@@ -13,12 +13,13 @@ Functions:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, timedelta
 
 import pandas as pd
 import yfinance as yf
 
 from src.utils.config_loader import (
+    DATA_END_DATE,
     DATA_START_DATE,
     YFINANCE_OHLCV_TICKERS,
     PG_SCHEMA_RAW,
@@ -29,6 +30,14 @@ from src.data.storage.postgres_client import upsert_dataframe
 logger = get_logger(__name__)
 
 
+def _exclusive_yfinance_end(end: str | None) -> str | None:
+    """Convert an inclusive project end date to Yahoo's exclusive end date."""
+
+    if end is None:
+        return None
+    return (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. FETCH OHLCV CHO MỘT TICKER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -36,7 +45,7 @@ logger = get_logger(__name__)
 def fetch_yfinance_ohlcv(
     ticker: str,
     start: str = DATA_START_DATE,
-    end: str | None = None,
+    end: str | None = DATA_END_DATE,
 ) -> pd.DataFrame:
     """Download OHLCV daily data cho một ticker từ Yahoo Finance.
 
@@ -56,7 +65,7 @@ def fetch_yfinance_ohlcv(
         raw = yf.download(
             ticker,
             start=start,
-            end=end,
+            end=_exclusive_yfinance_end(end),
             auto_adjust=True,
             progress=False,
         )
@@ -107,6 +116,7 @@ def fetch_yfinance_ohlcv(
 def ingest_yfinance_all(
     tickers: list[str] = YFINANCE_OHLCV_TICKERS,
     start: str = DATA_START_DATE,
+    end: str | None = DATA_END_DATE,
 ) -> dict[str, int]:
     """Fetch OHLCV cho tất cả tickers và upsert vào raw.yfinance_daily.
 
@@ -121,7 +131,7 @@ def ingest_yfinance_all(
 
     for ticker in tickers:
         try:
-            df = fetch_yfinance_ohlcv(ticker=ticker, start=start)
+            df = fetch_yfinance_ohlcv(ticker=ticker, start=start, end=end)
             if df.empty:
                 results[ticker] = 0
                 continue

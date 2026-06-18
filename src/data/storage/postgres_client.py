@@ -31,6 +31,31 @@ from src.utils.config_loader import SQL_DIR, PG_SCHEMA_RAW, PG_SCHEMA_STAGING, P
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
+SCHEMA_SQL_ORDER = (
+    "01_raw_tables.sql",
+    "02_staging_tables.sql",
+    "03_feature_tables.sql",
+)
+FEATURE_SQL_ORDER = (
+    "01_price_features.sql",
+    "02_momentum_features.sql",
+    "03_trend_features.sql",
+    "04_macro_features.sql",
+    "05_ratio_features.sql",
+    "06_target_labels.sql",
+    "07_sliding_window.sql",
+    "09_ewma_features.sql",
+    "08_master_features.sql",
+)
+
+
+def _prepare_dataframe_for_upsert(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a SQL-ready frame without accidental index columns."""
+
+    prepared = df.copy()
+    if prepared.index.name is None:
+        return prepared.reset_index(drop=True)
+    return prepared.reset_index(drop=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,11 +133,7 @@ def upsert_dataframe(
     if engine is None:
         engine = get_engine()
 
-    df = df.copy().reset_index(drop=False)
-
-    # Đổi tên index 'date' thành cột bình thường nếu có
-    if "date" in df.index.names and "date" not in df.columns:
-        df = df.reset_index()
+    df = _prepare_dataframe_for_upsert(df)
 
     cols = list(df.columns)
     update_cols = [c for c in cols if c not in conflict_cols]
@@ -126,6 +147,8 @@ def upsert_dataframe(
         update_clause = ", ".join(
             f'"{c}" = EXCLUDED."{c}"' for c in update_cols
         )
+        if "updated_at" not in cols:
+            update_clause = f"{update_clause}, updated_at = NOW()"
         sql = (
             f"INSERT INTO {full_table} ({col_clause}) VALUES %s "
             f"ON CONFLICT ({conflict_clause}) DO UPDATE SET {update_clause}"
@@ -192,8 +215,17 @@ def execute_sql_file(path: str | Path) -> None:
 
     sql_text = path.read_text(encoding="utf-8")
 
-    # Tách statements theo `;`, bỏ qua rỗng/comment/psql client commands
-    raw_stmts = sql_text.split(";")
+    # Remove full-line SQL comments before splitting. A semicolon inside a
+    # comment must not terminate the preceding SQL statement.
+    executable_lines = [
+        line.split("--", 1)[0]
+        for line in sql_text.splitlines()
+        if not line.lstrip().startswith("--")
+    ]
+    executable_sql = "\n".join(executable_lines)
+
+    # Tách statements theo `;`, bỏ qua rỗng/psql client commands
+    raw_stmts = executable_sql.split(";")
     statements = []
     for s in raw_stmts:
         s = s.strip()
@@ -323,7 +355,11 @@ def run_schema_pipeline(sql_dir: Path = SQL_DIR) -> None:
     ensure_schemas()
 
     schema_dir = sql_dir / "schema"
-    _run_ordered_sql_dir(schema_dir, label="schema")
+    _run_ordered_sql_dir(
+        schema_dir,
+        label="schema",
+        ordered_names=SCHEMA_SQL_ORDER,
+    )
 
 
 def run_feature_pipeline(sql_dir: Path = SQL_DIR) -> None:
@@ -333,15 +369,31 @@ def run_feature_pipeline(sql_dir: Path = SQL_DIR) -> None:
         sql_dir: Root của thư mục sql/ (mặc định từ config).
     """
     features_dir = sql_dir / "features"
-    _run_ordered_sql_dir(features_dir, label="features")
+    _run_ordered_sql_dir(
+        features_dir,
+        label="features",
+        ordered_names=FEATURE_SQL_ORDER,
+    )
 
 
-def _run_ordered_sql_dir(directory: Path, label: str) -> None:
+def _run_ordered_sql_dir(
+    directory: Path,
+    label: str,
+    ordered_names: Sequence[str] | None = None,
+) -> None:
     """Chạy tất cả .sql files trong directory theo thứ tự tên file."""
     if not directory.exists():
         raise FileNotFoundError(f"SQL directory không tìm thấy: {directory}")
 
-    sql_files = sorted(directory.glob("*.sql"))
+    if ordered_names is None:
+        sql_files = sorted(directory.glob("*.sql"))
+    else:
+        sql_files = [directory / name for name in ordered_names]
+        missing_files = [path.name for path in sql_files if not path.exists()]
+        if missing_files:
+            raise FileNotFoundError(
+                f"Missing ordered SQL files in {directory}: {missing_files}"
+            )
     if not sql_files:
         logger.warning("Không tìm thấy .sql file nào", extra={"dir": str(directory)})
         return

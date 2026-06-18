@@ -100,11 +100,11 @@ CREATE TABLE IF NOT EXISTS features.macro_features (
 
     -- Interest Rates
     fed_funds_rate      DOUBLE PRECISION,   -- FEDFUNDS (monthly, forward-filled)
-    us_interest_rate    DOUBLE PRECISION,   -- USINTR → usintr
+    us_interest_rate    DOUBLE PRECISION,   -- deprecated; excluded from modeling
     us_10y_yield        DOUBLE PRECISION,   -- DGS10
 
     -- Inflation
-    us_inflation_yoy    DOUBLE PRECISION,   -- FPCPITOTLZGUSA → usiryy
+    us_inflation_yoy    DOUBLE PRECISION,   -- deprecated; excluded from modeling
     cpi                 DOUBLE PRECISION,   -- CPIAUCSL
     core_cpi            DOUBLE PRECISION,   -- CPILFESL
     breakeven_inflation DOUBLE PRECISION,   -- T10YIE

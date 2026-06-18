@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Optional AutoML benchmark; keep separate because installation is heavy.
+autogluon.tabular>=1.5,<1.6

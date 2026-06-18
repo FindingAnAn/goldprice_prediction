@@ -24,6 +24,8 @@ def test_build_parser_accepts_all_subcommands():
     assert parser.parse_args(["train"]).command == "train"
     assert parser.parse_args(["evaluate"]).command == "evaluate"
     assert parser.parse_args(["predict"]).command == "predict"
+    assert parser.parse_args(["autogluon"]).command == "autogluon"
+    assert parser.parse_args(["train"]).target_col == "next_7_day_price"
 
 
 def test_main_train_smoke_uses_log_file_and_prints(
@@ -66,13 +68,17 @@ def test_main_evaluate_smoke(
     monkeypatch.setattr(
         run_modeling,
         "build_training_frame",
-        lambda: pd.DataFrame(
+        lambda **kwargs: pd.DataFrame(
             {"f1": [1.0, 2.0], "next_1_day_price": [1.0, 2.0]},
             index=pd.date_range("2024-01-01", periods=2, freq="D"),
         ),
     )
-    monkeypatch.setattr(run_modeling, "evaluate_holdout_model", lambda model, frame, test_size=0.2: {"rmse": 0.5})
-    monkeypatch.setattr(run_modeling.sys, "argv", ["run_modeling.py", "evaluate"])
+    monkeypatch.setattr(run_modeling, "evaluate_holdout_model", lambda model, frame, **kwargs: {"rmse": 0.5})
+    monkeypatch.setattr(
+        run_modeling.sys,
+        "argv",
+        ["run_modeling.py", "evaluate", "--target-col", "next_1_day_price"],
+    )
 
     run_modeling.main()
 

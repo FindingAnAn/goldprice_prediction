@@ -88,6 +88,32 @@ FROM raw.eia_oil WHERE series_id = 'RBRTE'
 ON CONFLICT (date) DO UPDATE SET
     brent_oil_price = EXCLUDED.brent_oil_price, updated_at = NOW();
 
+-- EIA spot prices thường trễ vài ngày. Bổ sung phần tail bằng oil futures,
+-- nhưng không ghi đè ngày đã có dữ liệu EIA.
+INSERT INTO staging.daily_master (date, wti_oil_price)
+SELECT yf.date, yf.close
+FROM raw.yfinance_daily yf
+WHERE yf.ticker = 'CL=F'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM raw.eia_oil eia
+      WHERE eia.date = yf.date AND eia.series_id = 'RWTC'
+  )
+ON CONFLICT (date) DO UPDATE SET
+    wti_oil_price = EXCLUDED.wti_oil_price, updated_at = NOW();
+
+INSERT INTO staging.daily_master (date, brent_oil_price)
+SELECT yf.date, yf.close
+FROM raw.yfinance_daily yf
+WHERE yf.ticker = 'BZ=F'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM raw.eia_oil eia
+      WHERE eia.date = yf.date AND eia.series_id = 'RBRTE'
+  )
+ON CONFLICT (date) DO UPDATE SET
+    brent_oil_price = EXCLUDED.brent_oil_price, updated_at = NOW();
+
 -- ---------------------------------------------------------------------------
 -- Bước 6: Upsert FRED Daily
 -- ---------------------------------------------------------------------------
@@ -111,6 +137,32 @@ INSERT INTO staging.daily_master (date, yield_curve_slope)
 SELECT date, value FROM raw.fred_daily WHERE series_id = 'T10Y2Y'
 ON CONFLICT (date) DO UPDATE SET yield_curve_slope = EXCLUDED.yield_curve_slope, updated_at = NOW();
 
+-- FRED daily có publication lag. Dùng Yahoo yield index cho các ngày FRED
+-- chưa có, nhưng giữ FRED làm nguồn ưu tiên khi cùng ngày.
+INSERT INTO staging.daily_master (date, us_10y_yield)
+SELECT yf.date, yf.close
+FROM raw.yfinance_daily yf
+WHERE yf.ticker = '^TNX'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM raw.fred_daily fred
+      WHERE fred.date = yf.date AND fred.series_id = 'DGS10'
+  )
+ON CONFLICT (date) DO UPDATE SET
+    us_10y_yield = EXCLUDED.us_10y_yield, updated_at = NOW();
+
+INSERT INTO staging.daily_master (date, us_30y_yield)
+SELECT yf.date, yf.close
+FROM raw.yfinance_daily yf
+WHERE yf.ticker = '^TYX'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM raw.fred_daily fred
+      WHERE fred.date = yf.date AND fred.series_id = 'DGS30'
+  )
+ON CONFLICT (date) DO UPDATE SET
+    us_30y_yield = EXCLUDED.us_30y_yield, updated_at = NOW();
+
 -- ---------------------------------------------------------------------------
 -- Bước 7: Upsert FRED Monthly (forward-fill vào daily)
 -- Dùng CROSS JOIN LATERAL để fill giá trị monthly vào các ngày trong tháng đó
@@ -122,8 +174,8 @@ SET
     core_cpi         = monthly_pivot.core_cpi,
     unemployment_rate= monthly_pivot.unemployment_rate,
     m2_money_supply  = monthly_pivot.m2_money_supply,
-    us_interest_rate = monthly_pivot.us_interest_rate,
-    us_inflation_yoy = monthly_pivot.us_inflation_yoy,
+    us_interest_rate = NULL,
+    us_inflation_yoy = NULL,
     retail_sales     = monthly_pivot.retail_sales
 FROM (
     SELECT
@@ -133,8 +185,6 @@ FROM (
         MAX(CASE WHEN series_id = 'CPILFESL'        THEN value END) AS core_cpi,
         MAX(CASE WHEN series_id = 'UNRATE'          THEN value END) AS unemployment_rate,
         MAX(CASE WHEN series_id = 'M2SL'            THEN value END) AS m2_money_supply,
-        MAX(CASE WHEN series_id = 'USINTR'          THEN value END) AS us_interest_rate,
-        MAX(CASE WHEN series_id = 'FPCPITOTLZGUSA'  THEN value END) AS us_inflation_yoy,
         MAX(CASE WHEN series_id = 'RSXFS'           THEN value END) AS retail_sales
     FROM raw.fred_monthly
     GROUP BY date

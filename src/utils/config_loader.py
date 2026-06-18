@@ -25,7 +25,12 @@ EIA_API_KEY:  str = os.getenv("EIA_API_KEY",  "")
 
 def _check_key(key: str, name: str) -> bool:
     """Kiểm tra key có hợp lệ không (không rỗng và không phải placeholder)."""
-    return bool(key) and not key.startswith("your_")
+    normalized = key.strip().lower()
+    return bool(normalized) and not (
+        normalized.startswith("your_")
+        or normalized.endswith("_here")
+        or "placeholder" in normalized
+    )
 
 FRED_KEY_VALID = _check_key(FRED_API_KEY, "FRED_API_KEY")
 EIA_KEY_VALID  = _check_key(EIA_API_KEY,  "EIA_API_KEY")
@@ -47,6 +52,11 @@ from config.settings import (  # noqa: E402
     EIA_PATH,
     DATA_START_DATE,
     DATA_END_DATE,
+    FORECAST_HORIZON_DAYS,
+    SUPPORTED_FORECAST_HORIZONS,
+    TARGET_COLUMN,
+    TARGET_LABEL_COLUMNS,
+    POINT_IN_TIME_UNSAFE_FEATURE_COLUMNS,
     PG_SCHEMA_RAW,
     PG_SCHEMA_STAGING,
     PG_SCHEMA_FEATURES,
@@ -71,6 +81,9 @@ __all__ = [
     "PG_SCHEMA_RAW", "PG_SCHEMA_STAGING", "PG_SCHEMA_FEATURES",
     # Config
     "DATA_START_DATE", "DATA_END_DATE",
+    "FORECAST_HORIZON_DAYS", "SUPPORTED_FORECAST_HORIZONS",
+    "TARGET_COLUMN", "TARGET_LABEL_COLUMNS",
+    "POINT_IN_TIME_UNSAFE_FEATURE_COLUMNS",
     "FREEGOLD_URLS", "YFINANCE_OHLCV_TICKERS",
     "FRED_DAILY_SERIES", "FRED_MONTHLY_SERIES",
     "EIA_BASE_URL", "EIA_SERIES", "EIA_YFINANCE_FALLBACK",

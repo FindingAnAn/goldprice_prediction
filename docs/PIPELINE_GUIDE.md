@@ -23,11 +23,11 @@ Tạo file `.env` tại root dự án (copy từ `.env.example` nếu có):
 
 ```env
 # PostgreSQL
-PG_HOST=localhost
-PG_PORT=5432
-PG_DB=gold_prediction
-PG_USER=postgres
-PG_PASSWORD=your_password
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=gold_prediction
+DB_USER=postgres
+DB_PASSWORD=your_password
 
 # FRED API (lấy miễn phí tại https://fred.stlouisfed.org/docs/api/api_key.html)
 FRED_API_KEY=your_fred_key
@@ -104,6 +104,15 @@ report = run_ingestion_pipeline(
     z_threshold=5.0,
 )
 ```
+
+Kiểm tra freshness trước/sau ingestion:
+
+```bash
+python scripts/check_data_freshness.py
+```
+
+Yahoo Finance phải đạt latest completed market date. FRED/EIA có publication
+lag tự nhiên; xem `docs/architecture/data_sources_freshness.md`.
 
 ### Hoặc chạy từng bước:
 
@@ -224,7 +233,7 @@ Hoặc từ Python:
 from src.modeling.train import train_and_select_best
 
 best = train_and_select_best(
-    target_col="next_1_day_price",
+    target_col="next_7_day_price",
     test_size=0.2,
     random_state=42,
     use_optuna=True,
@@ -241,9 +250,22 @@ jupyter nbconvert --to notebook --execute notebooks/04_modeling.ipynb
 
 > **Anti-leakage trong training:**
 > - `gold_close` và `gold_open` **không có trong `master_features`** (đã loại ở SQL)
-> - `infer_feature_columns()` tự động dùng tất cả numeric columns (không cần exclude thủ công)
+> - `infer_feature_columns()` loại toàn bộ `next_*_day_*`, không chỉ target đang dự báo
+> - FRED monthly chưa có release-date/vintage bị chặn khỏi model
 > - Optuna dùng `TimeSeriesSplit` CV trên **train set only** — X_test không bị nhìn thấy khi tune
+> - Target `t+7` dùng purge gap 7 phiên giữa train/test và giữa các CV fold
 > - Scaler `fit_transform` trên train, `transform` trên test
+
+### AutoGluon benchmark (tùy chọn)
+
+```bash
+pip install -r requirements-autogluon.txt
+python scripts/run_modeling.py autogluon --time-limit 600
+```
+
+AutoGluon dùng chronological train/validation/test. Chỉ kết luận tối ưu hơn
+khi RMSE/MAE trên final holdout thấp hơn pipeline chuẩn; không so sánh bằng
+training score.
 
 **Kết quả mong đợi:**
 
@@ -320,8 +342,9 @@ print(f"Pipeline hoàn tất. Best: {best.name} | Test-RMSE: {best.test_rmse:.2f
 | Lỗi | Nguyên nhân | Fix |
 |-----|-------------|-----|
 | `ConnectionError: HTTP 429 FreeGoldAPI` | Rate limit | Chờ 60s rồi chạy lại |
-| `FRED_API_KEY không hợp lệ` | Key sai hoặc không có | Kiểm tra `.env` |
-| `EIA API error` | Key hết hạn | Script tự fallback sang yfinance `CL=F`, `BZ=F` |
+| Không có `FRED_API_KEY` | Chưa cấu hình key | Pipeline tự dùng public FRED CSV |
+| `EIA API error` | Key thiếu/hết hạn | Script tự fallback sang yfinance `CL=F`, `BZ=F` |
+| PostgreSQL password authentication failed | Thiếu/sai `DB_PASSWORD` hoặc `DB_NAME` | Tạo `.env` đúng theo `.env.example` |
 | `relation "features.ewma_features" does not exist` | Schema chưa được tạo | Chạy lại `sql/schema/03_feature_tables.sql` |
 | `column "gold_close" does not exist` trong master_features | **Đúng rồi!** gold_close đã bị loại | Dùng `features.target_labels` nếu cần |
 | `staging.daily_master: 0 rows` | Chưa populate staging | Chạy `populate_staging_daily_master()` |

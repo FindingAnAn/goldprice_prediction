@@ -32,6 +32,31 @@ EIA_PATH          = RAW_INCOMING_DIR / "eia"
 DATA_START_DATE = "2000-01-01"   # Chỉ dùng daily data từ 2000 trở đi
 DATA_END_DATE   = None           # None = đến ngày hôm nay
 
+# Mục tiêu mặc định: giá đóng cửa sau 7 phiên giao dịch.
+# SQL target dùng LEAD(..., 7), vì vậy đây là 7 observations/trading sessions,
+# không phải 7 ngày lịch và cũng không phải vector gồm 7 giá trị.
+FORECAST_HORIZON_DAYS = 7
+TARGET_COLUMN = f"next_{FORECAST_HORIZON_DAYS}_day_price"
+SUPPORTED_FORECAST_HORIZONS = (1, 3, 7, 30)
+TARGET_LABEL_COLUMNS = tuple(
+    f"next_{horizon}_day_{target_kind}"
+    for horizon in SUPPORTED_FORECAST_HORIZONS
+    for target_kind in ("price", "direction", "price_change")
+)
+
+# FRED monthly observations are currently stored by observation month, not by
+# their historical release timestamp/vintage. Using them in backtests would
+# expose values that were not yet available, and possibly later revisions.
+POINT_IN_TIME_UNSAFE_FEATURE_COLUMNS = (
+    "fed_funds_rate",
+    "us_interest_rate",
+    "us_inflation_yoy",
+    "cpi",
+    "core_cpi",
+    "m2_money_supply",
+    "unemployment_rate",
+)
+
 # ─────────────────────────────────────────────
 # 3. POSTGRESQL SCHEMAS
 # ─────────────────────────────────────────────
@@ -69,6 +94,7 @@ YFINANCE_OHLCV_TICKERS = [
     "SLV",        # iShares Silver Trust
     "TLT",        # 20+ Year Treasury Bond ETF
     "UUP",        # Invesco US Dollar Bullish ETF
+    "^TYX",       # 30-Year Treasury Yield (fallback when FRED lags/unavailable)
 ]
 
 # ─────────────────────────────────────────────
@@ -92,8 +118,6 @@ FRED_MONTHLY_SERIES = {
     "RSXFS":    "Retail_Sales",          # Retail Sales (Monthly)
     "UNRATE":   "Unemployment_Rate",     # Unemployment Rate (Monthly)
     "M2SL":     "M2_Money_Supply",       # M2 Money Supply (Monthly)
-    "USINTR":   "US_Interest_Rate",      # US Interest Rate (Monthly) → usintr
-    "FPCPITOTLZGUSA": "US_Inflation_YoY", # US Inflation YoY → usiryy
 }
 
 # ─────────────────────────────────────────────
@@ -149,11 +173,14 @@ class DatabaseConfig:
             DatabaseConfig populated from the environment.
         """
         return cls(
-            host=os.getenv("DB_HOST", "127.0.0.1"),
-            port=int(os.getenv("DB_PORT", "5432")),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD", ""),
-            dbname=os.getenv("DB_NAME", "postgres"),
+            host=os.getenv("DB_HOST", os.getenv("PG_HOST", "127.0.0.1")),
+            port=int(os.getenv("DB_PORT", os.getenv("PG_PORT", "5432"))),
+            user=os.getenv(
+                "DB_USER",
+                os.getenv("PG_USER", os.getenv("PG_USERNAME", "postgres")),
+            ),
+            password=os.getenv("DB_PASSWORD", os.getenv("PG_PASSWORD", "")),
+            dbname=os.getenv("DB_NAME", os.getenv("PG_DB", "postgres")),
         )
 
     @property
