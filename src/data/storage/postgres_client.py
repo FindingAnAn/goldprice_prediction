@@ -118,7 +118,7 @@ def upsert_dataframe(
         table         : Tên bảng (không kèm schema).
         schema        : Schema PostgreSQL (ví dụ: 'raw', 'staging').
         conflict_cols : Danh sách cột tạo conflict key.
-        engine        : SQLAlchemy engine. Nếu None, tự tạo mới.
+        engine        : Giữ để tương thích API cũ; bulk upsert dùng psycopg2.
 
     Returns:
         Số dòng được upsert.
@@ -129,9 +129,6 @@ def upsert_dataframe(
     if df is None or df.empty:
         logger.warning("upsert_dataframe: DataFrame rỗng, bỏ qua.", extra={"table": f"{schema}.{table}"})
         return 0
-
-    if engine is None:
-        engine = get_engine()
 
     df = _prepare_dataframe_for_upsert(df)
 

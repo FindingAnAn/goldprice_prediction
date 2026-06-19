@@ -14,6 +14,8 @@ class DummyBest:
         self.name = "dummy"
         self.cv_rmse = 1.23
         self.test_rmse = 4.56
+        self.test_mae = 3.21
+        self.test_r2 = 0.98
         self.params = {"alpha": 0.1}
         self.model = object()
 

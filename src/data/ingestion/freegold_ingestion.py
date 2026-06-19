@@ -27,7 +27,7 @@ from src.utils.config_loader import (
     PG_SCHEMA_RAW,
 )
 from src.utils.logging_config import get_logger
-from src.data.storage.postgres_client import upsert_dataframe, get_engine
+from src.data.storage.postgres_client import upsert_dataframe
 
 logger = get_logger(__name__)
 

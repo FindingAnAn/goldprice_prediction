@@ -44,7 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Future price target; defaults to the 7-session horizon",
     )
     evaluate_parser = subparsers.add_parser("evaluate", help="Evaluate a persisted model on a holdout split")
-    evaluate_parser.add_argument("--model-path", default="models/best_model.joblib", help="Path to the persisted model")
+    evaluate_parser.add_argument(
+        "--model-path",
+        default="models/best_model_holdout.joblib",
+        help="Train-only model used for leakage-safe holdout evaluation",
+    )
     evaluate_parser.add_argument("--test-size", type=float, default=0.2, help="Chronological holdout ratio")
     evaluate_parser.add_argument(
         "--target-col",
@@ -98,6 +102,8 @@ def main() -> None:
             f"Best model: {best.name}\n"
             f"CV RMSE: {best.cv_rmse:.4f}\n"
             f"Test RMSE: {best.test_rmse:.4f}\n"
+            f"Test MAE: {best.test_mae:.4f}\n"
+            f"Test R2: {best.test_r2:.4f}\n"
             f"Params: {best.params}"
         )
         return

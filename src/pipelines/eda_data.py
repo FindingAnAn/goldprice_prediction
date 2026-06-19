@@ -20,6 +20,7 @@ class EDADataBundle:
 
     master_features: pd.DataFrame
     target_labels: pd.DataFrame
+    analysis_frame: pd.DataFrame
     combined: pd.DataFrame
     missing_values: pd.DataFrame
 
@@ -76,6 +77,27 @@ def load_target_labels(
         return pd.read_sql(query, connection, index_col="date", parse_dates=["date"])
 
 
+def load_current_gold_close(limit: int | None = None) -> pd.DataFrame:
+    """Load current gold close as a compatibility fallback for older schemas."""
+
+    engine = get_engine()
+    limit_clause = f"LIMIT {limit}" if limit is not None else ""
+    query = f"""
+        SELECT date, gold_close
+        FROM staging.daily_master
+        WHERE gold_close IS NOT NULL
+        ORDER BY date
+        {limit_clause}
+    """
+    with engine.connect() as connection:
+        return pd.read_sql(
+            query,
+            connection,
+            index_col="date",
+            parse_dates=["date"],
+        )
+
+
 def combine_with_targets(master_features: pd.DataFrame, target_labels: pd.DataFrame) -> pd.DataFrame:
     """Join master features and target labels on date.
 
@@ -86,7 +108,12 @@ def combine_with_targets(master_features: pd.DataFrame, target_labels: pd.DataFr
     Returns:
         Inner-joined DataFrame containing both features and targets.
     """
-    return master_features.join(target_labels, how="inner")
+    target_columns = [
+        column
+        for column in target_labels.columns
+        if column in TARGET_LABEL_COLUMNS
+    ]
+    return master_features.join(target_labels[target_columns], how="inner")
 
 
 def summarize_missing_values(df: pd.DataFrame) -> pd.DataFrame:
@@ -115,11 +142,17 @@ def build_eda_bundle() -> EDADataBundle:
     """
     master_features = load_master_features()
     target_labels = load_target_labels()
-    combined = combine_with_targets(master_features, target_labels)
+    if "gold_close" in master_features.columns:
+        analysis_frame = master_features
+    else:
+        current_gold = load_current_gold_close()
+        analysis_frame = master_features.join(current_gold, how="left")
+    combined = combine_with_targets(analysis_frame, target_labels)
     missing_values = summarize_missing_values(master_features)
     return EDADataBundle(
         master_features=master_features,
         target_labels=target_labels,
+        analysis_frame=analysis_frame,
         combined=combined,
         missing_values=missing_values,
     )
@@ -129,6 +162,7 @@ __all__ = [
     "EDADataBundle",
     "build_eda_bundle",
     "combine_with_targets",
+    "load_current_gold_close",
     "load_master_features",
     "load_target_labels",
     "summarize_missing_values",

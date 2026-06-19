@@ -3,20 +3,16 @@
 -- Populate features.master_features = JOIN tất cả feature tables.
 -- KHÔNG bao gồm features.target_labels (anti-leakage).
 --
--- Anti-leakage rules:
---   gold_close  → KHÔNG đưa vào features (sẽ dùng làm label)
---   gold_open   → KHÔNG đưa vào features (sẽ dùng làm label)
---   gold_high   → GIỮ LẠI (thông tin range ngày, không phải future)
---   gold_low    → GIỮ LẠI (thông tin range ngày, không phải future)
---   gold_volume → GIỮ LẠI (thông tin giao dịch ngày)
+-- Prediction cutoff: after the current trading session closes.
+-- Current OHLCV is therefore known and valid; only future target columns leak.
 -- =============================================================================
 
 TRUNCATE features.master_features;
 
 INSERT INTO features.master_features (
     date,
-    -- Raw values (chỉ high/low/volume — close và open dùng làm target)
-    gold_high, gold_low, gold_volume,
+    -- Current-session OHLCV
+    gold_close, gold_open, gold_high, gold_low, gold_volume,
     -- Price Indicators
     sma_10, sma_20, sma_50, sma_100, sma_200,
     ema_10, ema_20, ema_50, ema_100, ema_200,
@@ -50,8 +46,8 @@ INSERT INTO features.master_features (
 )
 SELECT
     s.date,
-    -- Raw (high/low/volume only — close/open used as labels, not features)
-    s.gold_high, s.gold_low, s.gold_volume,
+    -- Current-session OHLCV
+    s.gold_close, s.gold_open, s.gold_high, s.gold_low, s.gold_volume,
     -- Price
     pi.sma_10, pi.sma_20, pi.sma_50, pi.sma_100, pi.sma_200,
     pi.ema_10, pi.ema_20, pi.ema_50, pi.ema_100, pi.ema_200,

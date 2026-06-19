@@ -185,13 +185,14 @@ Pipeline SQL theo thứ tự:
 | 6 | `06_target_labels.sql` | `features.target_labels` | next 1/3/7/30-day price, direction, %change |
 | 7 | `07_sliding_window.sql` | `features.sliding_windows` | Rolling 5d/21d/63d/252d avg/max/min/std |
 | 8 | `09_ewma_features.sql` | `features.ewma_features` | EWMA 7d/30d/90d/365d + crossover signals |
-| 9 | `08_master_features.sql` | `features.master_features` | JOIN tất cả (không có close/open/targets) |
+| 9 | `08_master_features.sql` | `features.master_features` | JOIN features + OHLCV phiên hiện tại, không có future targets |
 
 **Kết quả mong đợi trong `master_features`:**
 
 ```
 Cột features (ví dụ):
-  gold_high, gold_low, gold_volume   ← raw (hợp lệ)
+  gold_close, gold_open, gold_high,
+  gold_low, gold_volume              ← OHLCV phiên hiện tại (hợp lệ sau close)
   sma_10 ... sma_200                 ← price indicators
   ema_10 ... ema_200                 ← exponential MA
   bb_upper, bb_lower, bb_width, bb_pct
@@ -205,7 +206,7 @@ Cột features (ví dụ):
   price_vs_ewma_7d ... _365d         ← distance signals
   ewma_cross_7_30, _30_90, _90_365  ← crossover signals
 
-KHÔNG có: gold_close, gold_open  ← đã loại (dùng làm label)
+KHÔNG có: next_*_day_*           ← target tương lai nằm ở bảng riêng
 ```
 
 ---
@@ -224,7 +225,7 @@ jupyter nbconvert --to notebook --execute notebooks/03_eda.ipynb
 
 ```bash
 # Từ project root
-python -m src.modeling.train
+python scripts/run_modeling.py train
 ```
 
 Hoặc từ Python:
@@ -249,9 +250,10 @@ jupyter nbconvert --to notebook --execute notebooks/04_modeling.ipynb
 ```
 
 > **Anti-leakage trong training:**
-> - `gold_close` và `gold_open` **không có trong `master_features`** (đã loại ở SQL)
+> - OHLCV phiên hiện tại hợp lệ vì cutoff dự báo là sau market close
 > - `infer_feature_columns()` loại toàn bộ `next_*_day_*`, không chỉ target đang dự báo
 > - FRED monthly chưa có release-date/vintage bị chặn khỏi model
+> - FRED daily dùng giá trị có ngày quan sát trước ngày dự báo; market yields lấy từ Yahoo trong phiên hiện tại
 > - Optuna dùng `TimeSeriesSplit` CV trên **train set only** — X_test không bị nhìn thấy khi tune
 > - Target `t+7` dùng purge gap 7 phiên giữa train/test và giữa các CV fold
 > - Scaler `fit_transform` trên train, `transform` trên test
@@ -267,37 +269,35 @@ AutoGluon dùng chronological train/validation/test. Chỉ kết luận tối ư
 khi RMSE/MAE trên final holdout thấp hơn pipeline chuẩn; không so sánh bằng
 training score.
 
-**Kết quả mong đợi:**
+**Benchmark gần nhất (chronological split, purge gap 7 phiên):**
 
 ```
-[Ridge              ] MAE=   45.23  RMSE=   61.45  R²=0.9987  MAPE=1.32%
-[Lasso              ] MAE=   47.11  RMSE=   63.20  R²=0.9986  MAPE=1.38%
-[RandomForest       ] MAE=   28.90  RMSE=   39.15  R²=0.9994  MAPE=0.84%
-[XGBoost            ] MAE=   22.14  RMSE=   31.88  R²=0.9996  MAPE=0.64%
-[LightGBM           ] MAE=   21.05  RMSE=   30.22  R²=0.9997  MAPE=0.61%
-[CatBoost           ] MAE=   20.89  RMSE=   29.75  R²=0.9997  MAPE=0.60%
-[Optuna+XGB         ] MAE=   19.44  RMSE=   27.63  R²=0.9997  MAPE=0.56%
-
-=== Leaderboard ===
-              MAE    RMSE      R2  MAPE
-Optuna+XGB  19.44   27.63  0.9997  0.56
-CatBoost    20.89   29.75  0.9997  0.60
-...
+model               CV RMSE   Test RMSE   Test MAE
+persistence           36.60       99.05      61.19
+return_catboost        44.42      108.78      69.22
+return_extra_trees     48.73      106.22      66.84
+return_lasso           63.88       96.59      60.70
 ```
+
+Tree/boosting models learn the 7-session return and reconstruct future price,
+because direct level prediction cannot extrapolate reliably under price drift.
+Selection still uses CV only; the lower test RMSE of `return_lasso` is not used
+to choose it after seeing the holdout.
 
 Model artifacts lưu tại `models/`:
 ```
 models/
 ├── best_model.joblib
-├── best_model_xgb.joblib
-├── scaler.joblib
-├── xgboost.json
-├── xgboost_optuna.json
-├── lightgbm.txt
-├── catboost.cbm
-├── random_forest.joblib
-└── ridge.joblib / lasso.joblib
+├── best_model_holdout.joblib
+└── best_model_<selected_name>.joblib
+
+data/predictions/
+├── model_leaderboard.csv
+└── permutation_importance.csv
 ```
+
+`best_model.joblib` được refit trên toàn bộ nhãn để dự báo production.
+Chỉ dùng `best_model_holdout.joblib` khi báo cáo holdout metric.
 
 ---
 
@@ -346,7 +346,7 @@ print(f"Pipeline hoàn tất. Best: {best.name} | Test-RMSE: {best.test_rmse:.2f
 | `EIA API error` | Key thiếu/hết hạn | Script tự fallback sang yfinance `CL=F`, `BZ=F` |
 | PostgreSQL password authentication failed | Thiếu/sai `DB_PASSWORD` hoặc `DB_NAME` | Tạo `.env` đúng theo `.env.example` |
 | `relation "features.ewma_features" does not exist` | Schema chưa được tạo | Chạy lại `sql/schema/03_feature_tables.sql` |
-| `column "gold_close" does not exist` trong master_features | **Đúng rồi!** gold_close đã bị loại | Dùng `features.target_labels` nếu cần |
+| Thiếu `gold_close` trong `master_features` | Schema/feature pipeline cũ | Chạy lại schema và `scripts/rebuild_features.py` |
 | `staging.daily_master: 0 rows` | Chưa populate staging | Chạy `populate_staging_daily_master()` |
 
 ---
@@ -387,7 +387,7 @@ gold_time_prediction/
 │   │   ├── 05_ratio_features.sql
 │   │   ├── 06_target_labels.sql      ← next_*_day_price (TARGET ONLY)
 │   │   ├── 07_sliding_window.sql
-│   │   ├── 08_master_features.sql    ← JOIN tất cả (KHÔNG có close/open)
+│   │   ├── 08_master_features.sql    ← JOIN features + current OHLCV, không có target
 │   │   └── 09_ewma_features.sql      ← EWMA 7/30/90/365d
 │   └── pipelines/
 │       └── run_features.sql          ← Orchestrate bước 1–9

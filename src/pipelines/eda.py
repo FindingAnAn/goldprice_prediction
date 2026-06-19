@@ -70,13 +70,13 @@ def run_eda_pipeline(show_plots: bool = True) -> EDAReport:
     render_eda_report(report)
 
     if show_plots:
-        plot_gold_price_trend(data.master_features, show=True)
-        plot_bollinger_bands(data.master_features, show=True)
-        plot_rsi_and_macd(data.master_features, show=True)
-        plot_macro_factors_vs_gold(data.master_features, show=True)
-        plot_gold_ratios(data.master_features, show=True)
+        plot_gold_price_trend(data.analysis_frame, show=True)
+        plot_bollinger_bands(data.analysis_frame, show=True)
+        plot_rsi_and_macd(data.analysis_frame, show=True)
+        plot_macro_factors_vs_gold(data.analysis_frame, show=True)
+        plot_gold_ratios(data.analysis_frame, show=True)
         plot_correlation_heatmap(data.combined, show=True)
-        plot_return_distributions(data.master_features, show=True)
+        plot_return_distributions(data.analysis_frame, show=True)
 
     return report
 

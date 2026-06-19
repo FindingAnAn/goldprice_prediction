@@ -28,5 +28,5 @@
 -- Bước 8: EWMA Features (7d/30d/90d/365d calendar exponential weights)
 \i sql/features/09_ewma_features.sql
 
--- Bước 9: Master Features (JOIN tất cả — không có close/open/targets)
+-- Bước 9: Master Features (JOIN features + current OHLCV; không có future targets)
 \i sql/features/08_master_features.sql

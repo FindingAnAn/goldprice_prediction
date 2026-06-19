@@ -5,6 +5,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 
 from src.modeling.train import (
+    ReturnTargetRegressor,
     build_training_frame,
     evaluate_holdout_model,
     infer_feature_columns,
@@ -60,6 +61,7 @@ def test_time_series_split_returns_chronological_parts():
 def test_train_and_select_best_uses_best_candidate(monkeypatch, tmp_path):
     frame = _sample_frame()
     monkeypatch.setattr("src.modeling.train.MODELS_DIR", tmp_path)
+    monkeypatch.setattr("src.modeling.train.MODEL_REPORT_DIR", tmp_path)
 
     def candidate_factory():
         return {
@@ -86,6 +88,14 @@ def test_infer_feature_columns_excludes_all_future_labels():
     feature_cols = infer_feature_columns(frame, target_col="next_7_day_price")
 
     assert feature_cols == ["f1", "f2"]
+
+
+def test_current_gold_close_is_valid_after_close_feature():
+    frame = _sample_frame().assign(gold_close=np.arange(12, dtype=float))
+
+    feature_cols = infer_feature_columns(frame, target_col="next_7_day_price")
+
+    assert "gold_close" in feature_cols
 
 
 def test_validate_feature_columns_rejects_point_in_time_unsafe_macro():
@@ -134,3 +144,32 @@ def test_evaluate_holdout_model_returns_rmse():
 
     assert set(metrics) == {"rmse"}
     assert metrics["rmse"] >= 0
+
+
+def test_evaluate_holdout_rejects_full_data_production_model():
+    frame = _sample_frame()
+    model = FirstFeatureRegressor().fit(
+        frame[["f1", "f2"]].to_numpy(),
+        frame["next_1_day_price"].to_numpy(),
+    )
+    model._gold_fit_scope = "full_labeled_data"
+
+    with np.testing.assert_raises(ValueError):
+        evaluate_holdout_model(
+            model,
+            frame,
+            feature_cols=["f1", "f2"],
+            target_col="next_1_day_price",
+            test_size=0.25,
+        )
+
+
+def test_return_target_regressor_reconstructs_future_price():
+    X = np.array([[100.0], [200.0], [300.0]])
+    y = np.array([110.0, 220.0, 330.0])
+    model = ReturnTargetRegressor(
+        base_estimator=ConstantRegressor(constant=10.0),
+        current_price_index=0,
+    ).fit(X, y)
+
+    np.testing.assert_allclose(model.predict(X), y)

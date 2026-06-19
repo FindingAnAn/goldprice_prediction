@@ -13,7 +13,8 @@ Functions:
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -30,12 +31,43 @@ from src.data.storage.postgres_client import upsert_dataframe
 logger = get_logger(__name__)
 
 
-def _exclusive_yfinance_end(end: str | None) -> str | None:
-    """Convert an inclusive project end date to Yahoo's exclusive end date."""
+NEW_YORK_TZ = ZoneInfo("America/New_York")
+SAFE_MARKET_CLOSE = time(18, 0)
 
-    if end is None:
-        return None
-    return (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+
+def _latest_complete_market_date(now: datetime | None = None) -> date:
+    """Return the latest date whose US market session is safely complete."""
+
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    new_york_now = reference.astimezone(NEW_YORK_TZ)
+
+    if (
+        new_york_now.weekday() < 5
+        and new_york_now.time() >= SAFE_MARKET_CLOSE
+    ):
+        candidate = new_york_now.date()
+    else:
+        candidate = new_york_now.date() - timedelta(days=1)
+
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _exclusive_yfinance_end(
+    end: str | None,
+    now: datetime | None = None,
+) -> str:
+    """Convert an inclusive complete-session date to Yahoo's exclusive end."""
+
+    inclusive_end = (
+        date.fromisoformat(end)
+        if end is not None
+        else _latest_complete_market_date(now=now)
+    )
+    return (inclusive_end + timedelta(days=1)).isoformat()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,7 +84,7 @@ def fetch_yfinance_ohlcv(
     Args:
         ticker : Yahoo Finance symbol (e.g. 'GC=F', 'DX-Y.NYB', '^GSPC').
         start  : Start date YYYY-MM-DD.
-        end    : End date YYYY-MM-DD. Nếu None = đến hôm nay.
+        end    : End date YYYY-MM-DD. Nếu None = phiên Mỹ đã hoàn tất gần nhất.
 
     Returns:
         pd.DataFrame với columns ['date', 'ticker', 'open', 'high', 'low', 'close', 'volume'].

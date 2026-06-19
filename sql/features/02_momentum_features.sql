@@ -48,23 +48,33 @@ rsi_calc AS (
     WHERE rn >= 14
 ),
 
--- ── MACD (EMA12 - EMA26, Signal = EMA9 of MACD) ───────────────────────────
--- EMA approximation: weighted sum / sum of weights (LWMA approach)
+-- ── MACD (finite EMA12 - finite EMA26, Signal = finite EMA9) ───────────────
 ema_calc AS (
     SELECT
-        date,
-        gold_close,
-        rn,
-        -- EMA 12
-        SUM(gold_close * POWER(1 - 2.0/13, rn - sub_rn)) OVER w12
-            / NULLIF(SUM(POWER(1 - 2.0/13, rn - sub_rn)) OVER w12, 0) AS ema_12,
-        -- EMA 26
-        SUM(gold_close * POWER(1 - 2.0/27, rn - sub_rn)) OVER w26
-            / NULLIF(SUM(POWER(1 - 2.0/27, rn - sub_rn)) OVER w26, 0) AS ema_26
-    FROM (SELECT *, rn AS sub_rn FROM base) sub
-    WINDOW
-        w12 AS (ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW),
-        w26 AS (ORDER BY date ROWS BETWEEN 25 PRECEDING AND CURRENT ROW)
+        current_row.date,
+        current_row.rn,
+        SUM(
+            history.gold_close
+            * POWER(1.0 - 2.0 / 13.0, current_row.rn - history.rn)
+        ) FILTER (WHERE history.rn >= current_row.rn - 11)
+        / NULLIF(
+            SUM(
+                POWER(1.0 - 2.0 / 13.0, current_row.rn - history.rn)
+            ) FILTER (WHERE history.rn >= current_row.rn - 11),
+            0
+        ) AS ema_12,
+        SUM(
+            history.gold_close
+            * POWER(1.0 - 2.0 / 27.0, current_row.rn - history.rn)
+        )
+        / NULLIF(
+            SUM(POWER(1.0 - 2.0 / 27.0, current_row.rn - history.rn)),
+            0
+        ) AS ema_26
+    FROM base current_row
+    JOIN base history
+      ON history.rn BETWEEN GREATEST(1, current_row.rn - 25) AND current_row.rn
+    GROUP BY current_row.date, current_row.rn
 ),
 macd_line AS (
     SELECT
@@ -74,13 +84,44 @@ macd_line AS (
     FROM ema_calc
     WHERE rn >= 26
 ),
-macd_signal_calc AS (
-    -- 9-period SMA of MACD (PostgreSQL disallows nested window functions,
-    -- so we use SMA as a standard approximation of the EMA-9 signal line)
+macd_numbered AS (
     SELECT
-        date, ema_12, ema_26, macd,
-        AVG(macd) OVER (ORDER BY date ROWS BETWEEN 8 PRECEDING AND CURRENT ROW) AS macd_signal
+        date,
+        ema_12,
+        ema_26,
+        macd,
+        ROW_NUMBER() OVER (ORDER BY date) AS macd_rn
     FROM macd_line
+),
+macd_signal_calc AS (
+    SELECT
+        current_row.date,
+        current_row.ema_12,
+        current_row.ema_26,
+        current_row.macd,
+        SUM(
+            history.macd
+            * POWER(1.0 - 2.0 / 10.0, current_row.macd_rn - history.macd_rn)
+        )
+        / NULLIF(
+            SUM(
+                POWER(
+                    1.0 - 2.0 / 10.0,
+                    current_row.macd_rn - history.macd_rn
+                )
+            ),
+            0
+        ) AS macd_signal
+    FROM macd_numbered current_row
+    JOIN macd_numbered history
+      ON history.macd_rn BETWEEN GREATEST(1, current_row.macd_rn - 8)
+                             AND current_row.macd_rn
+    GROUP BY
+        current_row.date,
+        current_row.ema_12,
+        current_row.ema_26,
+        current_row.macd,
+        current_row.macd_rn
 ),
 
 -- ── ROC-10 ─────────────────────────────────────────────────────────────────
@@ -101,19 +142,27 @@ roc_calc AS (
 cci_tp AS (
     SELECT
         date,
+        rn,
         (gold_high + gold_low + gold_close) / 3.0 AS tp,
         AVG((gold_high + gold_low + gold_close) / 3.0)
             OVER (ORDER BY date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS sma_tp_20
     FROM base
     WHERE gold_high IS NOT NULL AND gold_low IS NOT NULL
 ),
--- Step 2: use the pre-computed sma_tp_20 (plain column) in the mean deviation window
 cci_calc AS (
     SELECT
-        date, tp, sma_tp_20,
-        AVG(ABS(tp - sma_tp_20))
-            OVER (ORDER BY date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS mean_dev_20
-    FROM cci_tp
+        current_row.date,
+        current_row.tp,
+        current_row.sma_tp_20,
+        AVG(ABS(history.tp - current_row.sma_tp_20)) AS mean_dev_20
+    FROM cci_tp current_row
+    JOIN cci_tp history
+      ON history.rn BETWEEN GREATEST(1, current_row.rn - 19) AND current_row.rn
+    GROUP BY
+        current_row.date,
+        current_row.tp,
+        current_row.sma_tp_20,
+        current_row.rn
 ),
 cci_final AS (
     SELECT

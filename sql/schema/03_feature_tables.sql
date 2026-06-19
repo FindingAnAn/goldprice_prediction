@@ -255,14 +255,15 @@ CREATE TABLE IF NOT EXISTS features.target_labels (
 -- JOIN tất cả features — KHÔNG chứa target labels (anti-leakage).
 --
 -- Anti-leakage design:
---   gold_close / gold_open: KHÔNG lưu ở đây — chỉ tồn tại trong target_labels
---                            và staging.daily_master. Dùng làm label khi training.
---   gold_high / gold_low / gold_volume: GIỮ LẠI — thông tin trong ngày hợp lệ.
+--   OHLCV phiên hiện tại: hợp lệ vì thời điểm dự báo là sau khi phiên đóng cửa.
+--   next_*_day_*: KHÔNG lưu ở đây; target labels luôn nằm ở bảng riêng.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS features.master_features (
     date                DATE             NOT NULL PRIMARY KEY,
 
-    -- From staging.daily_master (high/low/volume only — close/open are labels)
+    -- Current-session OHLCV. Valid because prediction runs after market close.
+    gold_close          DOUBLE PRECISION,
+    gold_open           DOUBLE PRECISION,
     gold_high           DOUBLE PRECISION,
     gold_low            DOUBLE PRECISION,
     gold_volume         DOUBLE PRECISION,
@@ -360,5 +361,9 @@ CREATE TABLE IF NOT EXISTS features.master_features (
 
     updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE features.master_features
+    ADD COLUMN IF NOT EXISTS gold_close DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS gold_open DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS idx_master_features_date ON features.master_features (date);

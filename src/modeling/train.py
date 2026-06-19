@@ -14,10 +14,14 @@ from typing import Callable
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, RegressorMixin, clone
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Lasso, Ridge
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -33,6 +37,7 @@ logger = get_logger(__name__)
 
 MODELS_DIR = Path("models")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_REPORT_DIR = Path("data/predictions")
 TARGET_COLUMN_PATTERN = re.compile(
     r"^next_(?P<horizon>\d+)_day_(?:price|direction|price_change)$"
 )
@@ -45,6 +50,41 @@ class TrainResult:
     cv_rmse: float
     test_rmse: float
     params: dict[str, object]
+    test_mae: float = float("nan")
+    test_r2: float = float("nan")
+
+
+class FeatureColumnRegressor(BaseEstimator, RegressorMixin):
+    """Persistence baseline that returns one observed feature column."""
+
+    def __init__(self, feature_index: int):
+        self.feature_index = feature_index
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "FeatureColumnRegressor":
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return np.asarray(X[:, self.feature_index], dtype=float)
+
+
+class ReturnTargetRegressor(BaseEstimator, RegressorMixin):
+    """Learn a percentage return, then reconstruct the future price."""
+
+    def __init__(self, base_estimator: object, current_price_index: int):
+        self.base_estimator = base_estimator
+        self.current_price_index = current_price_index
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "ReturnTargetRegressor":
+        current_price = np.asarray(X[:, self.current_price_index], dtype=float)
+        return_target = (np.asarray(y, dtype=float) / current_price - 1.0) * 100.0
+        self.estimator_ = clone(self.base_estimator)
+        self.estimator_.fit(X, return_target)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        current_price = np.asarray(X[:, self.current_price_index], dtype=float)
+        predicted_return = np.asarray(self.estimator_.predict(X), dtype=float)
+        return current_price * (1.0 + predicted_return / 100.0)
 
 
 def time_series_train_test_split(
@@ -153,29 +193,116 @@ def validate_feature_columns(feature_cols: list[str]) -> None:
 
 
 def _lazy_import_optional_models() -> dict[str, object]:
+    median_imputer = SimpleImputer(strategy="median", add_indicator=True)
     candidates: dict[str, object] = {
         "ridge": Pipeline(
-            [("scaler", StandardScaler()), ("model", Ridge(alpha=1.0))]
+            [
+                ("imputer", median_imputer),
+                ("scaler", StandardScaler()),
+                ("model", Ridge(alpha=1.0)),
+            ]
         ),
         "lasso": Pipeline(
-            [("scaler", StandardScaler()), ("model", Lasso(alpha=0.01, max_iter=10_000))]
+            [
+                ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
+                ("scaler", StandardScaler()),
+                (
+                    "model",
+                    Lasso(
+                        alpha=0.01,
+                        max_iter=10_000,
+                        tol=1e-3,
+                        selection="random",
+                        random_state=42,
+                    ),
+                ),
+            ]
         ),
-        "rf": RandomForestRegressor(random_state=42, n_estimators=200),
+        "extra_trees": Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
+                (
+                    "model",
+                    ExtraTreesRegressor(
+                        random_state=42,
+                        n_estimators=200,
+                        min_samples_leaf=2,
+                        n_jobs=-1,
+                    ),
+                ),
+            ]
+        ),
+        "hist_gbr": Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
+                (
+                    "model",
+                    HistGradientBoostingRegressor(
+                        random_state=42,
+                        learning_rate=0.05,
+                        max_iter=300,
+                        l2_regularization=1.0,
+                    ),
+                ),
+            ]
+        ),
+        "rf": Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
+                (
+                    "model",
+                    RandomForestRegressor(
+                        random_state=42,
+                        n_estimators=200,
+                        min_samples_leaf=2,
+                        n_jobs=-1,
+                    ),
+                ),
+            ]
+        ),
     }
 
     try:
         from lightgbm import LGBMRegressor
 
-        candidates["lgbm"] = LGBMRegressor(random_state=42, n_estimators=200)
+        candidates["lgbm"] = LGBMRegressor(
+            random_state=42,
+            n_estimators=500,
+            learning_rate=0.03,
+            n_jobs=-1,
+            verbosity=-1,
+        )
     except Exception:
         logger.info("lightgbm is unavailable; skipping LGBM candidate")
 
     try:
         from xgboost import XGBRegressor
 
-        candidates["xgb"] = XGBRegressor(random_state=42, n_estimators=200, verbosity=0)
+        candidates["xgb"] = XGBRegressor(
+            random_state=42,
+            n_estimators=500,
+            learning_rate=0.03,
+            max_depth=5,
+            n_jobs=-1,
+            verbosity=0,
+        )
     except Exception:
         logger.info("xgboost is unavailable; skipping XGB candidate")
+
+    try:
+        from catboost import CatBoostRegressor
+
+        candidates["catboost"] = CatBoostRegressor(
+            random_seed=42,
+            iterations=500,
+            learning_rate=0.03,
+            depth=6,
+            loss_function="RMSE",
+            verbose=False,
+            allow_writing_files=False,
+        )
+    except Exception:
+        logger.info("catboost is unavailable; skipping CatBoost candidate")
 
     return candidates
 
@@ -205,7 +332,7 @@ def _fit_and_evaluate(
 ) -> TrainResult:
     params: dict[str, object] = {}
 
-    if use_optuna:
+    if use_optuna and name != "persistence":
         model, params = tune_candidate(
             name,
             model,
@@ -220,8 +347,18 @@ def _fit_and_evaluate(
     model.fit(X_train, y_train)
     predictions = model.predict(X_test)
     test_rmse = float(np.sqrt(mean_squared_error(y_test, predictions)))
+    test_mae = float(mean_absolute_error(y_test, predictions))
+    test_r2 = float(r2_score(y_test, predictions))
 
-    return TrainResult(name=name, model=model, cv_rmse=cv_rmse, test_rmse=test_rmse, params=params)
+    return TrainResult(
+        name=name,
+        model=model,
+        cv_rmse=cv_rmse,
+        test_rmse=test_rmse,
+        params=params,
+        test_mae=test_mae,
+        test_r2=test_r2,
+    )
 
 
 def tune_candidate(
@@ -276,41 +413,73 @@ def _clone_and_tune_from_params(
     random_state: int,
 ) -> object:
     tuned_params = dict(params)
-    if name in {"rf", "lgbm", "xgb"}:
-        tuned_params.setdefault("random_state", random_state)
+    if name.startswith("return_"):
+        tuned_params = {
+            f"base_estimator__{key}": value
+            for key, value in tuned_params.items()
+        }
     return _clone_model(model, tuned_params)
 
 
 def _clone_model(model: object, params: dict[str, object]) -> object:
     if hasattr(model, "set_params"):
-        return model.set_params(**params)
+        return clone(model).set_params(**params)
 
     raise TypeError(f"Unsupported model type for tuning: {type(model)!r}")
 
 
 def _sample_params(name: str, trial: object, random_state: int) -> dict[str, object]:
-    import optuna  # type: ignore[import-not-found]
+    is_return_model = name.startswith("return_")
+    base_name = name.removeprefix("return_")
 
-    if name == "ridge":
-        return {"model__alpha": trial.suggest_float("model__alpha", 0.01, 10.0, log=True)}
-    if name == "lasso":
-        return {"model__alpha": trial.suggest_float("model__alpha", 0.0001, 1.0, log=True)}
-    if name == "rf":
-        return {
-            "n_estimators": trial.suggest_int("n_estimators", 100, 400),
-            "max_depth": trial.suggest_int("max_depth", 2, 12),
-            "min_samples_split": trial.suggest_int("min_samples_split", 2, 10),
-            "random_state": random_state,
+    if base_name == "ridge":
+        params = {"model__alpha": trial.suggest_float("model__alpha", 0.01, 10.0, log=True)}
+    elif base_name == "lasso":
+        params = {"model__alpha": trial.suggest_float("model__alpha", 0.0001, 1.0, log=True)}
+    elif base_name == "rf":
+        params = {
+            "model__n_estimators": trial.suggest_int(
+                "model__n_estimators", 150, 500
+            ),
+            "model__max_depth": trial.suggest_int("model__max_depth", 3, 16),
+            "model__min_samples_leaf": trial.suggest_int(
+                "model__min_samples_leaf", 1, 8
+            ),
         }
-    if name == "lgbm":
-        return {
+    elif base_name == "extra_trees":
+        params = {
+            "model__n_estimators": trial.suggest_int(
+                "model__n_estimators", 150, 500
+            ),
+            "model__max_features": trial.suggest_float(
+                "model__max_features", 0.4, 1.0
+            ),
+            "model__min_samples_leaf": trial.suggest_int(
+                "model__min_samples_leaf", 1, 8
+            ),
+        }
+    elif base_name == "hist_gbr":
+        params = {
+            "model__max_iter": trial.suggest_int("model__max_iter", 150, 500),
+            "model__learning_rate": trial.suggest_float(
+                "model__learning_rate", 0.01, 0.15, log=True
+            ),
+            "model__max_leaf_nodes": trial.suggest_int(
+                "model__max_leaf_nodes", 15, 63
+            ),
+            "model__l2_regularization": trial.suggest_float(
+                "model__l2_regularization", 1e-4, 10.0, log=True
+            ),
+        }
+    elif base_name == "lgbm":
+        params = {
             "n_estimators": trial.suggest_int("n_estimators", 100, 400),
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
             "num_leaves": trial.suggest_int("num_leaves", 15, 63),
             "random_state": random_state,
         }
-    if name == "xgb":
-        return {
+    elif base_name == "xgb":
+        params = {
             "n_estimators": trial.suggest_int("n_estimators", 100, 400),
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
             "max_depth": trial.suggest_int("max_depth", 2, 8),
@@ -319,8 +488,23 @@ def _sample_params(name: str, trial: object, random_state: int) -> dict[str, obj
             "random_state": random_state,
             "verbosity": 0,
         }
+    elif base_name == "catboost":
+        params = {
+            "iterations": trial.suggest_int("iterations", 200, 700),
+            "learning_rate": trial.suggest_float(
+                "learning_rate", 0.01, 0.15, log=True
+            ),
+            "depth": trial.suggest_int("depth", 4, 9),
+            "l2_leaf_reg": trial.suggest_float(
+                "l2_leaf_reg", 1e-3, 10.0, log=True
+            ),
+        }
+    else:
+        raise ValueError(f"Unknown candidate name: {name}")
 
-    raise ValueError(f"Unknown candidate name: {name}")
+    if is_return_model:
+        return {f"base_estimator__{key}": value for key, value in params.items()}
+    return params
 
 
 def train_and_select_best(
@@ -350,7 +534,14 @@ def train_and_select_best(
     if not feature_cols:
         raise ValueError("No numeric feature columns are available")
 
-    modeling_frame = df.dropna(subset=feature_cols + [target_col]).copy()
+    required_observed = [
+        column
+        for column in ("gold_close", "gold_open", "gold_high", "gold_low")
+        if column in feature_cols
+    ]
+    modeling_frame = df.dropna(
+        subset=required_observed + [target_col]
+    ).copy()
     modeling_frame = modeling_frame.sort_index()
 
     forecast_horizon = infer_forecast_horizon(target_col)
@@ -366,6 +557,28 @@ def train_and_select_best(
     y_test = test_df[target_col].to_numpy()
 
     candidates = candidate_factory() if candidate_factory is not None else _lazy_import_optional_models()
+    if "gold_close" in feature_cols:
+        current_price_index = feature_cols.index("gold_close")
+        if candidate_factory is None and target_col.endswith("_price"):
+            direct_linear = {
+                name: model
+                for name, model in candidates.items()
+                if name in {"ridge", "lasso"}
+            }
+            return_models = {
+                f"return_{name}": ReturnTargetRegressor(
+                    base_estimator=model,
+                    current_price_index=current_price_index,
+                )
+                for name, model in candidates.items()
+            }
+            candidates = {**direct_linear, **return_models}
+        candidates = {
+            "persistence": FeatureColumnRegressor(
+                feature_index=current_price_index
+            ),
+            **candidates,
+        }
     if not candidates:
         raise RuntimeError("No candidate models are available")
 
@@ -403,10 +616,72 @@ def train_and_select_best(
         raise RuntimeError("No candidate models succeeded during training")
 
     best = min(results, key=lambda item: item.cv_rmse)
+    leaderboard = pd.DataFrame(
+        [
+            {
+                "model": result.name,
+                "cv_rmse": result.cv_rmse,
+                "test_rmse": result.test_rmse,
+                "test_mae": result.test_mae,
+                "test_r2": result.test_r2,
+                "params": result.params,
+            }
+            for result in results
+        ]
+    ).sort_values("cv_rmse")
+    leaderboard_path = MODEL_REPORT_DIR / "model_leaderboard.csv"
+    leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
+    leaderboard.to_csv(leaderboard_path, index=False)
+
+    importance = permutation_importance(
+        best.model,
+        X_test,
+        y_test,
+        scoring="neg_root_mean_squared_error",
+        n_repeats=5,
+        random_state=random_state,
+        n_jobs=-1,
+    )
+    pd.DataFrame(
+        {
+            "feature": feature_cols,
+            "importance_mean": importance.importances_mean,
+            "importance_std": importance.importances_std,
+        }
+    ).sort_values("importance_mean", ascending=False).to_csv(
+        MODEL_REPORT_DIR / "permutation_importance.csv",
+        index=False,
+    )
+
+    evaluation_model = best.model
+    try:
+        setattr(evaluation_model, "_gold_feature_cols", list(feature_cols))
+        setattr(evaluation_model, "_gold_target_col", target_col)
+        setattr(evaluation_model, "_gold_forecast_horizon", forecast_horizon)
+        setattr(evaluation_model, "_gold_fit_scope", "train_only")
+    except Exception:
+        logger.warning("Could not attach metadata to the holdout model")
+    joblib.dump(evaluation_model, MODELS_DIR / "best_model_holdout.joblib")
+
+    production_model = clone(evaluation_model)
+    production_model.fit(
+        modeling_frame[feature_cols].to_numpy(),
+        modeling_frame[target_col].to_numpy(),
+    )
+    best = TrainResult(
+        name=best.name,
+        model=production_model,
+        cv_rmse=best.cv_rmse,
+        test_rmse=best.test_rmse,
+        params=best.params,
+        test_mae=best.test_mae,
+        test_r2=best.test_r2,
+    )
     try:
         setattr(best.model, "_gold_feature_cols", list(feature_cols))
         setattr(best.model, "_gold_target_col", target_col)
         setattr(best.model, "_gold_forecast_horizon", forecast_horizon)
+        setattr(best.model, "_gold_fit_scope", "full_labeled_data")
     except Exception:
         logger.warning("Could not attach modeling metadata to the selected model")
     joblib.dump(best.model, MODELS_DIR / f"best_model_{best.name}.joblib")
@@ -431,6 +706,12 @@ def evaluate_holdout_model(
 ) -> dict[str, float]:
     """Evaluate a fitted model on a chronological holdout split."""
 
+    if getattr(model, "_gold_fit_scope", None) == "full_labeled_data":
+        raise ValueError(
+            "Cannot evaluate the production model on its historical holdout: "
+            "it was refit on all labeled data. Use models/best_model_holdout.joblib."
+        )
+
     if target_col not in df.columns:
         raise KeyError(f"Target column {target_col!r} was not found in the evaluation frame")
 
@@ -438,7 +719,16 @@ def evaluate_holdout_model(
         feature_cols = infer_feature_columns(df, target_col)
     validate_feature_columns(feature_cols)
 
-    evaluation_frame = df.dropna(subset=feature_cols + [target_col]).copy().sort_index()
+    required_observed = [
+        column
+        for column in ("gold_close", "gold_open", "gold_high", "gold_low")
+        if column in feature_cols
+    ]
+    evaluation_frame = (
+        df.dropna(subset=required_observed + [target_col])
+        .copy()
+        .sort_index()
+    )
     forecast_horizon = infer_forecast_horizon(target_col)
     _, test_df = time_series_train_test_split(
         evaluation_frame,
@@ -454,6 +744,8 @@ def evaluate_holdout_model(
 
 __all__ = [
     "TrainResult",
+    "FeatureColumnRegressor",
+    "ReturnTargetRegressor",
     "build_training_frame",
     "infer_feature_columns",
     "infer_forecast_horizon",

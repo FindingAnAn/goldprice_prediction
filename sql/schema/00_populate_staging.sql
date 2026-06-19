@@ -137,17 +137,44 @@ INSERT INTO staging.daily_master (date, yield_curve_slope)
 SELECT date, value FROM raw.fred_daily WHERE series_id = 'T10Y2Y'
 ON CONFLICT (date) DO UPDATE SET yield_curve_slope = EXCLUDED.yield_curve_slope, updated_at = NOW();
 
--- FRED daily có publication lag. Dùng Yahoo yield index cho các ngày FRED
--- chưa có, nhưng giữ FRED làm nguồn ưu tiên khi cùng ngày.
+-- Point-in-time safety: economic observations are only made available to a
+-- gold row after their observation date. This conservative one-session lag
+-- avoids assuming same-day FRED publication.
+UPDATE staging.daily_master dm
+SET
+    us_10y_yield = (
+        SELECT value FROM raw.fred_daily
+        WHERE series_id = 'DGS10' AND date < dm.date
+        ORDER BY date DESC LIMIT 1
+    ),
+    us_2y_yield = (
+        SELECT value FROM raw.fred_daily
+        WHERE series_id = 'DGS2' AND date < dm.date
+        ORDER BY date DESC LIMIT 1
+    ),
+    us_30y_yield = (
+        SELECT value FROM raw.fred_daily
+        WHERE series_id = 'DGS30' AND date < dm.date
+        ORDER BY date DESC LIMIT 1
+    ),
+    breakeven_inflation = (
+        SELECT value FROM raw.fred_daily
+        WHERE series_id = 'T10YIE' AND date < dm.date
+        ORDER BY date DESC LIMIT 1
+    ),
+    yield_curve_slope = (
+        SELECT value FROM raw.fred_daily
+        WHERE series_id = 'T10Y2Y' AND date < dm.date
+        ORDER BY date DESC LIMIT 1
+    )
+WHERE dm.gold_close IS NOT NULL;
+
+-- Yahoo yield indices are market prices available at the current close, so
+-- they take priority for 10Y and 30Y when present.
 INSERT INTO staging.daily_master (date, us_10y_yield)
 SELECT yf.date, yf.close
 FROM raw.yfinance_daily yf
 WHERE yf.ticker = '^TNX'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM raw.fred_daily fred
-      WHERE fred.date = yf.date AND fred.series_id = 'DGS10'
-  )
 ON CONFLICT (date) DO UPDATE SET
     us_10y_yield = EXCLUDED.us_10y_yield, updated_at = NOW();
 
@@ -155,11 +182,6 @@ INSERT INTO staging.daily_master (date, us_30y_yield)
 SELECT yf.date, yf.close
 FROM raw.yfinance_daily yf
 WHERE yf.ticker = '^TYX'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM raw.fred_daily fred
-      WHERE fred.date = yf.date AND fred.series_id = 'DGS30'
-  )
 ON CONFLICT (date) DO UPDATE SET
     us_30y_yield = EXCLUDED.us_30y_yield, updated_at = NOW();
 

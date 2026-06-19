@@ -39,7 +39,11 @@ SELECT
 
     -- Real Yield = Nominal 10Y Yield - Breakeven Inflation
     -- (real yield âm → gold tăng vì opportunity cost giảm)
-    COALESCE(us_10y_yield, 0) - COALESCE(breakeven_inflation, 0)  AS real_yield,
+    CASE
+        WHEN us_10y_yield IS NOT NULL
+         AND breakeven_inflation IS NOT NULL
+        THEN us_10y_yield - breakeven_inflation
+    END AS real_yield,
 
     -- Brent-WTI spread (quality / location premium)
     brent_oil_price - wti_oil_price  AS oil_spread,

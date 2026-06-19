@@ -96,14 +96,14 @@ def run_feature_engineering() -> dict[str, int]:
 def load_master_feature_sample(limit: int = 10) -> pd.DataFrame:
     """Load a sample from features.master_features for verification.
 
-    Note: gold_close and gold_open are intentionally absent from master_features
-    (they are reserved as prediction targets in features.target_labels).
+    Current OHLCV is present because prediction runs after the session close.
+    Future labels remain isolated in features.target_labels.
     """
     engine = get_engine()
     with engine.connect() as connection:
         return pd.read_sql(
             f"""
-            SELECT date, gold_high, gold_low, gold_volume,
+            SELECT date, gold_close, gold_open, gold_high, gold_low, gold_volume,
                    sma_20, rsi_14, macd, adx_14,
                    dxy_close, gold_silver_ratio, real_yield,
                    gold_pct_chg_21d, ewma_30d, price_vs_ewma_30d

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pandas as pd
 
 from config.settings import DatabaseConfig
 from src.data.ingestion import fred_ingestion
-from src.data.ingestion.yfinance_ingestion import _exclusive_yfinance_end
+from src.data.ingestion.yfinance_ingestion import (
+    _exclusive_yfinance_end,
+    _latest_complete_market_date,
+)
 from src.data.storage.postgres_client import _prepare_dataframe_for_upsert
 
 
@@ -46,7 +51,20 @@ def test_prepare_dataframe_for_upsert_preserves_named_date_index():
 
 def test_yfinance_end_date_is_inclusive_for_project_callers():
     assert _exclusive_yfinance_end("2026-06-18") == "2026-06-19"
-    assert _exclusive_yfinance_end(None) is None
+
+
+def test_yfinance_excludes_current_session_before_us_close():
+    before_close = datetime(2026, 6, 19, 16, 0, tzinfo=timezone.utc)
+
+    assert _latest_complete_market_date(before_close).isoformat() == "2026-06-18"
+    assert _exclusive_yfinance_end(None, now=before_close) == "2026-06-19"
+
+
+def test_yfinance_includes_current_session_after_safe_close():
+    after_close = datetime(2026, 6, 20, 0, 0, tzinfo=timezone.utc)
+
+    assert _latest_complete_market_date(after_close).isoformat() == "2026-06-19"
+    assert _exclusive_yfinance_end(None, now=after_close) == "2026-06-20"
 
 
 def test_fred_uses_public_csv_when_api_key_is_missing(monkeypatch):
