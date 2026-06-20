@@ -7,6 +7,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import text
 
+from src.data.ingestion.cftc_ingestion import fetch_cftc_current_positioning
 from src.data.ingestion.eia_ingestion import fetch_eia_series
 from src.data.ingestion.fred_ingestion import fetch_fred_series
 from src.data.ingestion.freegold_ingestion import fetch_freegoldapi
@@ -17,6 +18,7 @@ from src.utils.config_loader import (
     EIA_SERIES,
     FRED_DAILY_SERIES,
     FRED_MONTHLY_SERIES,
+    DATA_START_DATE,
     YFINANCE_OHLCV_TICKERS,
 )
 
@@ -48,7 +50,7 @@ def collect_api_freshness(
     records: list[FreshnessRecord] = []
 
     try:
-        frame = fetch_freegoldapi(start="2000-01-01")
+        frame = fetch_freegoldapi(start=DATA_START_DATE)
         records.append(
             FreshnessRecord(
                 "FreeGoldAPI",
@@ -103,6 +105,29 @@ def collect_api_freshness(
                 )
             )
 
+    try:
+        frame = fetch_cftc_current_positioning()
+        latest = frame["available_date"].max() if not frame.empty else None
+        records.append(
+            FreshnessRecord(
+                "CFTC",
+                "Gold disaggregated",
+                latest,
+                "ok" if latest else "empty",
+                "available_date = report Tuesday + 3 calendar days",
+            )
+        )
+    except Exception as exc:
+        records.append(
+            FreshnessRecord(
+                "CFTC",
+                "Gold disaggregated",
+                None,
+                "error",
+                str(exc),
+            )
+        )
+
     return records
 
 
@@ -115,8 +140,14 @@ def collect_database_freshness() -> list[FreshnessRecord]:
         ("PostgreSQL", "raw.fred_daily"): "SELECT MAX(date) FROM raw.fred_daily",
         ("PostgreSQL", "raw.fred_monthly"): "SELECT MAX(date) FROM raw.fred_monthly",
         ("PostgreSQL", "raw.eia_oil"): "SELECT MAX(date) FROM raw.eia_oil",
+        ("PostgreSQL", "raw.cftc_gold_positioning"): (
+            "SELECT MAX(available_date) FROM raw.cftc_gold_positioning"
+        ),
         ("PostgreSQL", "staging.daily_master"): "SELECT MAX(date) FROM staging.daily_master",
         ("PostgreSQL", "features.master_features"): "SELECT MAX(date) FROM features.master_features",
+        ("PostgreSQL", "forecasting.model_runs"): (
+            "SELECT MAX(started_at)::date FROM forecasting.model_runs"
+        ),
     }
     try:
         engine = get_engine()

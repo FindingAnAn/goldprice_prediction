@@ -8,9 +8,7 @@ INSERT INTO features.macro_features (
     date,
     dxy_open, dxy_high, dxy_low, dxy_close,
     fed_funds_rate,
-    us_interest_rate,
     us_10y_yield,
-    us_inflation_yoy,
     cpi, core_cpi,
     breakeven_inflation,
     us_2y_yield, us_30y_yield,
@@ -24,9 +22,7 @@ SELECT
     date,
     dxy_open, dxy_high, dxy_low, dxy_close,
     fed_funds_rate,
-    us_interest_rate,   -- usintr
     us_10y_yield,
-    us_inflation_yoy,   -- usiryy
     cpi, core_cpi,
     breakeven_inflation,
     us_2y_yield, us_30y_yield,
@@ -38,16 +34,14 @@ SELECT
     NOW()
 FROM staging.daily_master
 WHERE gold_close IS NOT NULL
-  AND date >= '2000-01-01'
+  AND date >= '2010-01-01'
 ON CONFLICT (date) DO UPDATE SET
     dxy_open            = EXCLUDED.dxy_open,
     dxy_high            = EXCLUDED.dxy_high,
     dxy_low             = EXCLUDED.dxy_low,
     dxy_close           = EXCLUDED.dxy_close,
     fed_funds_rate      = EXCLUDED.fed_funds_rate,
-    us_interest_rate    = EXCLUDED.us_interest_rate,
     us_10y_yield        = EXCLUDED.us_10y_yield,
-    us_inflation_yoy    = EXCLUDED.us_inflation_yoy,
     cpi                 = EXCLUDED.cpi,
     core_cpi            = EXCLUDED.core_cpi,
     breakeven_inflation = EXCLUDED.breakeven_inflation,

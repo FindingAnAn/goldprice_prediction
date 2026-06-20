@@ -15,8 +15,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config.settings import POINT_IN_TIME_UNSAFE_FEATURE_COLUMNS
 from src.data.storage.postgres_client import get_engine
-from src.modeling.train import infer_feature_columns
+from src.modeling.time_series import infer_feature_columns
 from src.pipelines.eda_data import (
+    add_open_target_changes,
     combine_with_targets,
     load_current_gold_close,
     load_master_features,
@@ -86,19 +87,22 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     master = load_master_features()
-    targets = load_target_labels(target_col="next_7_day_price_change")
+    targets = load_target_labels(target_col="next_10_day_open")
     if "gold_close" in master.columns:
         analysis_features = master
     else:
         analysis_features = master.join(load_current_gold_close(), how="left")
-    analysis = combine_with_targets(analysis_features, targets).sort_index()
+    analysis = add_open_target_changes(
+        combine_with_targets(analysis_features, targets)
+    ).sort_index()
+    target_column = "next_10_day_open_change_pct"
 
     feature_cols = infer_feature_columns(
         analysis,
-        target_col="next_7_day_price_change",
+        target_col="next_10_day_open",
     )
     valid = analysis.dropna(
-        subset=["gold_high", "gold_low", "gold_volume", "next_7_day_price_change"]
+        subset=["gold_high", "gold_low", "gold_volume", target_column]
     )
 
     missing = pd.DataFrame(
@@ -107,15 +111,15 @@ def main() -> None:
             "missing_pct": master.isna().mean() * 100,
         }
     ).sort_values("missing_pct", ascending=False)
-    target_summary = analysis["next_7_day_price_change"].describe(
+    target_summary = analysis[target_column].describe(
         percentiles=[0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]
     )
     yearly_target = (
-        analysis["next_7_day_price_change"]
+        analysis[target_column]
         .groupby(analysis.index.year)
         .agg(["count", "mean", "std", "median", "min", "max"])
     )
-    top_corr = _top_spearman_correlations(valid, feature_cols, "next_7_day_price_change")
+    top_corr = _top_spearman_correlations(valid, feature_cols, target_column)
     high_corr = _high_correlation_pairs(valid, feature_cols)
     drift = _standardized_drift(valid, feature_cols)
 
@@ -150,10 +154,10 @@ def main() -> None:
     print(f"date_range={analysis.index.min().date()} -> {analysis.index.max().date()}")
     print(f"point_in_time_blocked={list(POINT_IN_TIME_UNSAFE_FEATURE_COLUMNS)}")
 
-    print("\n=== TARGET t+7 RETURN (%) ===")
+    print("\n=== TARGET t+10 OPEN CHANGE VS CURRENT CLOSE (%) ===")
     print(target_summary.to_string())
 
-    print("\n=== TOP SPEARMAN CORRELATIONS WITH t+7 RETURN ===")
+    print("\n=== TOP SPEARMAN CORRELATIONS WITH t+10 OPEN CHANGE ===")
     print(top_corr.head(20).to_string())
 
     print("\n=== HIGHLY REDUNDANT FEATURE PAIRS (|corr| >= 0.98) ===")

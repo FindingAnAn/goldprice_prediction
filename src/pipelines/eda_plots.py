@@ -160,7 +160,7 @@ def plot_correlation_heatmap(df: pd.DataFrame, show: bool = True) -> plt.Figure:
         "gold_oil_ratio",
         "gold_pct_chg_5d",
         "gold_pct_chg_21d",
-        "next_7_day_price_change",
+        "next_10_day_open_change_pct",
     ]
     available = [column for column in key_features if column in df.columns]
 
@@ -214,12 +214,6 @@ def print_target_label_statistics(df_targets: pd.DataFrame) -> None:
     print("=== Target Labels Statistics ===")
     print(df_targets.describe().T)
 
-    for horizon in [1, 3, 7, 30]:
-        column = f"next_{horizon}_day_direction"
-        if column in df_targets.columns:
-            up = df_targets[column].sum()
-            total = df_targets[column].count()
-            print(f"Next {horizon:2d}d UP: {up / total * 100:.1f}% | DOWN: {(1 - up / total) * 100:.1f}% | N={total}")
 
 
 __all__ = [

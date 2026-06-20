@@ -8,7 +8,7 @@ WITH base AS (
         ROW_NUMBER() OVER (ORDER BY date) AS rn
     FROM staging.daily_master
     WHERE gold_close IS NOT NULL
-      AND date >= '2000-01-01'
+      AND date >= '2010-01-01'
 ),
 weighted AS (
     SELECT

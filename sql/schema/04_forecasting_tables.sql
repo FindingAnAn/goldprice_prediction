@@ -74,6 +74,10 @@ CREATE TABLE IF NOT EXISTS forecasting.open_predictions (
     forecast_step           INTEGER NOT NULL,
     forecast_date           DATE NOT NULL,
     predicted_open          DOUBLE PRECISION NOT NULL,
+    reference_close         DOUBLE PRECISION,
+    predicted_change_amount DOUBLE PRECISION,
+    predicted_change_pct    DOUBLE PRECISION,
+    forecast_direction      VARCHAR(24),
     lower_80                DOUBLE PRECISION,
     upper_80                DOUBLE PRECISION,
     lower_95                DOUBLE PRECISION,
@@ -82,6 +86,10 @@ CREATE TABLE IF NOT EXISTS forecasting.open_predictions (
     absolute_error          DOUBLE PRECISION,
     percentage_error        DOUBLE PRECISION,
     is_estimated_date       BOOLEAN NOT NULL DEFAULT TRUE,
+    top_reason_1            TEXT,
+    top_reason_2            TEXT,
+    top_reason_3            TEXT,
+    explanation_method      VARCHAR(80),
     evaluated_at            TIMESTAMPTZ,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (run_id, forecast_step)
@@ -116,3 +124,13 @@ CREATE INDEX IF NOT EXISTS idx_open_predictions_forecast_date
 ALTER TABLE forecasting.model_candidates
     ADD COLUMN IF NOT EXISTS rmse_improvement_vs_persistence_pct
         DOUBLE PRECISION;
+
+ALTER TABLE forecasting.open_predictions
+    ADD COLUMN IF NOT EXISTS reference_close DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS predicted_change_amount DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS predicted_change_pct DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS forecast_direction VARCHAR(24),
+    ADD COLUMN IF NOT EXISTS top_reason_1 TEXT,
+    ADD COLUMN IF NOT EXISTS top_reason_2 TEXT,
+    ADD COLUMN IF NOT EXISTS top_reason_3 TEXT,
+    ADD COLUMN IF NOT EXISTS explanation_method VARCHAR(80);

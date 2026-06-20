@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.dummy import DummyRegressor
 
 from src.modeling.open_forecast import (
     MultiHorizonPersistenceRegressor,
-    MultiHorizonReturnRegressor,
     next_estimated_session_dates,
 )
-from src.modeling.train import infer_feature_columns
+from src.modeling.time_series import infer_feature_columns
 
 
 def test_multi_horizon_persistence_repeats_current_close():
@@ -23,23 +21,6 @@ def test_multi_horizon_persistence_repeats_current_close():
         model.predict(X),
         np.array([[100.0, 100.0, 100.0], [200.0, 200.0, 200.0]]),
     )
-
-
-def test_multi_horizon_return_regressor_reconstructs_open_prices():
-    X = np.array([[100.0], [200.0], [300.0]])
-    y = np.array(
-        [
-            [101.0, 102.0],
-            [202.0, 204.0],
-            [303.0, 306.0],
-        ]
-    )
-    model = MultiHorizonReturnRegressor(
-        base_estimator=DummyRegressor(strategy="mean"),
-        current_price_index=0,
-    ).fit(X, y)
-
-    np.testing.assert_allclose(model.predict(X), y)
 
 
 def test_open_targets_are_never_inferred_as_features():

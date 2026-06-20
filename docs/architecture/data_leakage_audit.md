@@ -2,53 +2,49 @@
 
 ## Kết luận
 
-Pipeline modeling chính hiện chặn hai nhóm leakage:
+Không phát hiện target leakage trực tiếp trong production training path hiện
+tại. Các boundary chính đã được bảo vệ bằng SQL, feature filter và chronological
+evaluation. Vẫn còn residual point-in-time risk từ revision/release timestamp
+của FRED; vì vậy kết quả là research-grade, chưa phải trading-grade.
 
-1. Tất cả target tương lai `next_*_day_*`.
-2. FRED monthly chưa point-in-time safe:
-   `fed_funds_rate`, `us_interest_rate`, `us_inflation_yoy`, `cpi`,
-   `core_cpi`, `m2_money_supply`, `unemployment_rate`.
+## Audit theo lớp
 
-Nhóm FRED monthly vẫn được giữ trong database phục vụ EDA, nhưng không được
-đưa vào training hoặc AutoGluon benchmark.
+| Risk | Control | Trạng thái |
+|---|---|---|
+| Future target trong feature | Target ở bảng riêng; prefix `next_<n>_day_` bị chặn | Đã kiểm soát |
+| Random split | Chronological split và rolling windows | Đã kiểm soát |
+| Overlap train/test target | Purge gap 10 phiên | Đã kiểm soát |
+| CFTC Tuesday report dùng trước Friday | Join từ `available_date = report_date + 3` | Đã kiểm soát |
+| Seasonal analog dùng tương lai gần | Chỉ dùng historical row ít nhất 1 năm trước | Đã kiểm soát |
+| Monthly macro revision | Cấm các cột monthly trong model | Đã kiểm soát |
+| Daily FRED vintage/release | Observation date + 1 ngày, không có ALFRED vintage | Rủi ro còn lại |
+| Current OHLCV | Chỉ hợp lệ vì cutoff là sau phiên | Điều kiện bắt buộc |
 
-Forward-fill daily chỉ được phép nhìn về quá khứ tối đa `max_gap_days`; không
-backfill và không kéo giá trị cũ vô hạn.
+## Target isolation
 
-## Leakage đã phát hiện
+`features.master_features` không join `features.target_labels`. Training frame
+chỉ join hai bảng ngay trước modeling. `infer_feature_columns()` loại:
 
-`sql/schema/00_populate_staging.sql` gán observation monthly cho toàn bộ ngày
-trong cùng tháng. Trong thực tế, CPI, unemployment, M2 và các chỉ số tương tự
-được công bố sau observation period. API FRED hiện tại cũng trả về series có
-thể đã được revision. Vì vậy historical backtest có thể nhìn thấy thông tin
-chưa tồn tại tại thời điểm dự báo.
+- toàn bộ `OPEN_TARGET_COLUMNS`;
+- mọi cột khớp `^next_\d+_day_`;
+- danh sách `POINT_IN_TIME_UNSAFE_FEATURE_COLUMNS`.
 
-## Các phần hiện an toàn
+## Validation protocol
 
-- Target `next_7_day_price` nằm riêng trong `features.target_labels`.
-- Training frame chỉ join đúng một target được chọn.
-- Feature inference và validation chặn mọi cột `next_*_day_*`.
-- Train/test và `TimeSeriesSplit` có purge gap bằng forecast horizon.
-- AutoGluon dùng validation theo thời gian và final holdout riêng.
-- Rolling SQL dùng `PRECEDING ... CURRENT ROW`, không dùng `FOLLOWING`.
-- Notebook modeling không dùng test set cho early stopping/Optuna; Optuna chỉ
-  dùng `TimeSeriesSplit(gap=7)` trên train.
-- Notebook holdout chỉ dùng để so sánh; model production được chọn bằng CV
-  trong `src/modeling/train.py`, không chọn lại theo holdout.
+- Baseline holdout: chronological, purge gap 10.
+- Deep models: rolling cross-validation, step size 10, không shuffle.
+- Model selection: rolling RMSE; final future data không tham gia selection.
+- Production refit chỉ chạy sau evaluation.
 
-## Giả định thời điểm dự báo
+## Seasonal analog
 
-Prediction được tạo sau khi phiên giao dịch ngày `t` đã đóng cửa. Do đó các
-feature dùng close/high/low ngày `t` là hợp lệ. Nếu dự báo trước hoặc trong
-phiên, các feature này phải được lag ít nhất một phiên.
+Feature analog có thể dùng `LEAD()` để tính outcome của một historical row,
+nhưng row đó phải cách current row ít nhất một năm. Do horizon lớn nhất 21 phiên,
+outcome đã được biết nhiều tháng trước current date.
 
-## Cách mở lại FRED monthly
+## Việc cần làm nếu đưa vào trading
 
-Chỉ đưa các cột trên trở lại model khi ingestion lưu được:
-
-- release timestamp thực tế;
-- vintage/realtime date tại thời điểm lịch sử;
-- as-of join: `release_timestamp <= prediction_timestamp`.
-
-ALFRED/FRED vintage data hoặc một economic-calendar source có release timestamp
-là phương án phù hợp.
+1. Thay FRED bằng ALFRED vintage hoặc release-calendar point-in-time dataset.
+2. Dùng CME trading calendar chính thức.
+3. Version raw snapshot thay vì truncate.
+4. Thêm walk-forward benchmark theo regime và transaction-aware decision rule.

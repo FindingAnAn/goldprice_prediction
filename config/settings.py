@@ -26,51 +26,34 @@ FREEGOLD_PATH     = RAW_INCOMING_DIR / "freegoldapi"
 YFINANCE_PATH     = RAW_INCOMING_DIR / "yfinance"
 FRED_PATH         = RAW_INCOMING_DIR / "fred"
 EIA_PATH          = RAW_INCOMING_DIR / "eia"
+CFTC_PATH         = RAW_INCOMING_DIR / "cftc"
 
 # ─────────────────────────────────────────────
 # 2. TIME RANGE
 # ─────────────────────────────────────────────
-DATA_START_DATE = "2000-01-01"   # Chỉ dùng daily data từ 2000 trở đi
+DATA_START_DATE = "2010-01-01"   # Đồng bộ lịch sử với CFTC disaggregated COT
 DATA_END_DATE   = None           # None = đến ngày hôm nay
 
-# Mục tiêu mặc định: giá đóng cửa sau 7 phiên giao dịch.
-# SQL target dùng LEAD(..., 7), vì vậy đây là 7 observations/trading sessions,
-# không phải 7 ngày lịch và cũng không phải vector gồm 7 giá trị.
-FORECAST_HORIZON_DAYS = 7
-TARGET_COLUMN = f"next_{FORECAST_HORIZON_DAYS}_day_price"
 OPEN_FORECAST_HORIZON = 10
 OPEN_FORECAST_RANDOM_SEED = 42
 OPEN_FORECAST_TEST_SIZE = 0.2
 OPEN_FORECAST_CV_SPLITS = 3
 OPEN_FORECAST_MODEL_CONFIG = {
-    "ridge_alpha": 1.0,
-    "extra_trees_estimators": 300,
-    "extra_trees_min_samples_leaf": 3,
-    "extra_trees_max_features": 0.7,
-    "random_forest_estimators": 250,
-    "random_forest_min_samples_leaf": 3,
-    "random_forest_max_features": 0.7,
+    "benchmark_family": "sequence_sliding_window",
+    "mandatory_models": ("TiDE", "PatchTST", "NHITS"),
+    "baseline": "persistence_close",
 }
+OPEN_FORECAST_FLAT_THRESHOLD_PCT = 0.05
 OPEN_TARGET_COLUMNS = tuple(
     f"next_{horizon}_day_open"
     for horizon in range(1, OPEN_FORECAST_HORIZON + 1)
 )
-# Trading-session horizons used for comparison:
-# 5≈one week, 10≈two weeks, 21≈one month, 63≈one quarter.
-SUPPORTED_FORECAST_HORIZONS = (1, 3, 5, 7, 10, 21, 30, 63)
-TARGET_LABEL_COLUMNS = tuple(
-    f"next_{horizon}_day_{target_kind}"
-    for horizon in SUPPORTED_FORECAST_HORIZONS
-    for target_kind in ("price", "direction", "price_change")
-) + OPEN_TARGET_COLUMNS
 
 # FRED monthly observations are currently stored by observation month, not by
 # their historical release timestamp/vintage. Using them in backtests would
 # expose values that were not yet available, and possibly later revisions.
 POINT_IN_TIME_UNSAFE_FEATURE_COLUMNS = (
     "fed_funds_rate",
-    "us_interest_rate",
-    "us_inflation_yoy",
     "cpi",
     "core_cpi",
     "m2_money_supply",
@@ -115,6 +98,8 @@ YFINANCE_OHLCV_TICKERS = [
     "SLV",        # iShares Silver Trust
     "TLT",        # 20+ Year Treasury Bond ETF
     "UUP",        # Invesco US Dollar Bullish ETF
+    "TIP",        # US Treasury Inflation-Protected Securities ETF
+    "HYG",        # US High-Yield Corporate Bond ETF
     "^TYX",       # 30-Year Treasury Yield (fallback when FRED lags/unavailable)
 ]
 
@@ -130,13 +115,15 @@ FRED_DAILY_SERIES = {
     "SP500":    "SP500",                 # S&P 500 Index (Daily)
     "VIXCLS":   "VIX",                   # CBOE VIX Index (Daily)
     "T10Y2Y":   "Yield_Curve_Slope",     # 10Y minus 2Y spread (Daily)
+    "DFII10":   "US_10Y_Real_Yield",     # 10Y TIPS real yield (Daily)
+    "USEPUINDXD": "US_Economic_Policy_Uncertainty",  # News-based EPU (Daily)
+    "BAMLH0A0HYM2": "US_High_Yield_OAS", # Credit-risk spread (Daily)
 }
 
 FRED_MONTHLY_SERIES = {
     "CPIAUCSL": "CPI",                   # Consumer Price Index (Monthly)
     "CPILFESL": "Core_CPI",             # Core CPI ex food/energy (Monthly)
     "FEDFUNDS": "Fed_Funds_Rate",        # Federal Funds Rate (Monthly)
-    "RSXFS":    "Retail_Sales",          # Retail Sales (Monthly)
     "UNRATE":   "Unemployment_Rate",     # Unemployment Rate (Monthly)
     "M2SL":     "M2_Money_Supply",       # M2 Money Supply (Monthly)
 }
@@ -156,6 +143,42 @@ EIA_YFINANCE_FALLBACK = {
     "RWTC":  "CL=F",   # WTI futures
     "RBRTE": "BZ=F",   # Brent futures
 }
+
+# CFTC Disaggregated Futures-Only annual archives. The report describes
+# Tuesday positions and is normally released Friday; available_date therefore
+# uses a conservative +3 calendar-day lag for point-in-time-safe joins.
+CFTC_HISTORY_URL_TEMPLATE = (
+    "https://www.cftc.gov/files/dea/history/fut_disagg_txt_{year}.zip"
+)
+CFTC_CURRENT_URL = "https://www.cftc.gov/dea/newcot/f_disagg.txt"
+CFTC_GOLD_CONTRACT_CODE = "088691"
+CFTC_FIRST_DISAGGREGATED_YEAR = 2010
+
+# Sequence models are mandatory benchmark participants. N-HiTS is the
+# additional multi-resolution challenger.
+DEEP_FORECAST_MODELS = ("TiDE", "PatchTST", "NHITS")
+DEEP_FORECAST_HORIZONS = (1, 3, 5, 7, 10)
+DEEP_FORECAST_INPUT_SIZE = 252
+DEEP_FORECAST_VALIDATION_SIZE = 63
+DEEP_FORECAST_DEFAULT_WINDOWS = 6
+DEEP_FORECAST_DEFAULT_MAX_STEPS = 100
+DEEP_FORECAST_MIN_EXOG_COVERAGE = 0.80
+DEEP_FORECAST_HIST_EXOG = (
+    "gold_close",
+    "dxy_close",
+    "real_yield",
+    "real_yield_change_5d",
+    "vix",
+    "vix_change_5d",
+    "gold_silver_ratio",
+    "gold_pct_chg_21d",
+    "ewma_vol_30d",
+    "economic_policy_uncertainty",
+    "epu_zscore_63d",
+    "cftc_mm_net_pct_oi",
+    "cftc_mm_net_change_pct_oi",
+    "gld_volume_zscore_21d",
+)
 
 
 # ─────────────────────────────────────────────

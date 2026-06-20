@@ -45,3 +45,6 @@ def test_feature_pipeline_runs_ewma_before_master(monkeypatch, tmp_path):
     assert executed.index("10_seasonality_features.sql") < executed.index(
         "08_master_features.sql"
     )
+    assert executed.index("11_market_driver_features.sql") < executed.index(
+        "08_master_features.sql"
+    )

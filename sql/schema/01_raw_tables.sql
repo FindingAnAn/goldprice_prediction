@@ -85,3 +85,30 @@ CREATE TABLE IF NOT EXISTS raw.eia_oil (
 );
 
 CREATE INDEX IF NOT EXISTS idx_eia_oil_date ON raw.eia_oil (date);
+
+-- ---------------------------------------------------------------------------
+-- raw.cftc_gold_positioning
+-- Weekly COMEX gold positioning. available_date is the conservative Friday
+-- release date used for point-in-time-safe feature joins.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS raw.cftc_gold_positioning (
+    report_date                 DATE NOT NULL,
+    available_date              DATE NOT NULL,
+    contract_code               VARCHAR(12) NOT NULL,
+    market_name                 TEXT,
+    open_interest               DOUBLE PRECISION,
+    producer_long               DOUBLE PRECISION,
+    producer_short              DOUBLE PRECISION,
+    swap_long                   DOUBLE PRECISION,
+    swap_short                  DOUBLE PRECISION,
+    managed_money_long          DOUBLE PRECISION,
+    managed_money_short         DOUBLE PRECISION,
+    managed_money_spread        DOUBLE PRECISION,
+    managed_money_long_change   DOUBLE PRECISION,
+    managed_money_short_change  DOUBLE PRECISION,
+    updated_at                  TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (report_date, contract_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cftc_gold_available_date
+    ON raw.cftc_gold_positioning (available_date);

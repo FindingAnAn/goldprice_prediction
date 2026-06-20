@@ -13,8 +13,8 @@ def test_combine_with_targets_excludes_duplicate_metadata():
     )
     targets = pd.DataFrame(
         {
-            "next_7_day_price": [10.0, 11.0],
-            "next_1_day_price": [8.0, 9.0],
+            "next_10_day_open": [10.0, 11.0],
+            "next_1_day_open": [8.0, 9.0],
             "updated_at": [3, 4],
         },
         index=index,
@@ -22,5 +22,5 @@ def test_combine_with_targets_excludes_duplicate_metadata():
 
     combined = combine_with_targets(features, targets)
 
-    assert "next_7_day_price" in combined
+    assert "next_10_day_open" in combined
     assert list(combined.columns).count("updated_at") == 1

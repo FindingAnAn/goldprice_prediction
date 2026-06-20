@@ -41,7 +41,7 @@ class EDAReport:
 
 
 def render_eda_report(report: EDAReport) -> None:
-    """Print the summary blocks shown in the notebook."""
+    """Print the main EDA summary blocks."""
     master = report.data.master_features
     combined = report.data.combined
     missing = report.data.missing_values

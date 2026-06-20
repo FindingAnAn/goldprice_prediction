@@ -11,8 +11,10 @@ from .postgres_client import (
     execute_sql_file,
     run_schema_pipeline,
     run_feature_pipeline,
+    truncate_pipeline_data,
     table_exists,
     get_row_count,
+    get_row_counts,
 )
 
 __all__ = [
@@ -22,6 +24,8 @@ __all__ = [
     "execute_sql_file",
     "run_schema_pipeline",
     "run_feature_pipeline",
+    "truncate_pipeline_data",
     "table_exists",
     "get_row_count",
+    "get_row_counts",
 ]

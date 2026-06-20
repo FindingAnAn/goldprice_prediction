@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS features.trend_indicators (
 
 -- ---------------------------------------------------------------------------
 -- features.macro_features
--- DXY OHLC, Fed Funds, yields, inflation, usintr, usiryy
+-- DXY OHLC, Fed Funds, yields and inflation
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS features.macro_features (
     date                DATE             NOT NULL PRIMARY KEY,
@@ -100,11 +100,9 @@ CREATE TABLE IF NOT EXISTS features.macro_features (
 
     -- Interest Rates
     fed_funds_rate      DOUBLE PRECISION,   -- FEDFUNDS (monthly, forward-filled)
-    us_interest_rate    DOUBLE PRECISION,   -- deprecated; excluded from modeling
     us_10y_yield        DOUBLE PRECISION,   -- DGS10
 
     -- Inflation
-    us_inflation_yoy    DOUBLE PRECISION,   -- deprecated; excluded from modeling
     cpi                 DOUBLE PRECISION,   -- CPIAUCSL
     core_cpi            DOUBLE PRECISION,   -- CPILFESL
     breakeven_inflation DOUBLE PRECISION,   -- T10YIE
@@ -145,6 +143,44 @@ CREATE TABLE IF NOT EXISTS features.ratio_features (
 
     updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ---------------------------------------------------------------------------
+-- features.market_driver_features
+-- Economically interpretable market, uncertainty, credit and positioning
+-- features. All external observations are joined by their known availability.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS features.market_driver_features (
+    date                              DATE NOT NULL PRIMARY KEY,
+    gold_gap_pct                      DOUBLE PRECISION,
+    gold_intraday_return_pct          DOUBLE PRECISION,
+    gold_range_pct                    DOUBLE PRECISION,
+    gold_close_location               DOUBLE PRECISION,
+    dxy_return_5d                     DOUBLE PRECISION,
+    us_10y_real_yield                DOUBLE PRECISION,
+    real_yield_change_5d              DOUBLE PRECISION,
+    vix_change_5d                     DOUBLE PRECISION,
+    sp500_return_5d                   DOUBLE PRECISION,
+    gld_return_5d                     DOUBLE PRECISION,
+    gld_volume_zscore_21d             DOUBLE PRECISION,
+    tlt_return_5d                     DOUBLE PRECISION,
+    uup_return_5d                     DOUBLE PRECISION,
+    tip_return_5d                     DOUBLE PRECISION,
+    hyg_return_5d                     DOUBLE PRECISION,
+    economic_policy_uncertainty       DOUBLE PRECISION,
+    epu_zscore_63d                    DOUBLE PRECISION,
+    high_yield_spread                 DOUBLE PRECISION,
+    high_yield_spread_change_5d       DOUBLE PRECISION,
+    cftc_mm_net_pct_oi                DOUBLE PRECISION,
+    cftc_mm_net_change_pct_oi         DOUBLE PRECISION,
+    cftc_producer_net_pct_oi          DOUBLE PRECISION,
+    cftc_swap_net_pct_oi              DOUBLE PRECISION,
+    cftc_mm_net_zscore_52w            DOUBLE PRECISION,
+    cftc_positioning_age_days         INTEGER,
+    updated_at                        TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE features.market_driver_features
+    ADD COLUMN IF NOT EXISTS us_10y_real_yield DOUBLE PRECISION;
 
 -- ---------------------------------------------------------------------------
 -- features.sliding_windows
@@ -294,8 +330,7 @@ CREATE TABLE IF NOT EXISTS features.ewma_features (
 );
 
 -- ---------------------------------------------------------------------------
--- features.target_labels  (TÁCH RIÊNG — không join vào master_features)
--- Chứa target variables: next N-day price/direction/change
+-- features.target_labels: isolated multi-output gold-open targets.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS features.target_labels (
     date                    DATE             NOT NULL PRIMARY KEY,
@@ -311,36 +346,6 @@ CREATE TABLE IF NOT EXISTS features.target_labels (
     next_8_day_open         DOUBLE PRECISION,
     next_9_day_open         DOUBLE PRECISION,
     next_10_day_open        DOUBLE PRECISION,
-
-    -- Next N-day price (LEAD)
-    next_1_day_price        DOUBLE PRECISION,
-    next_3_day_price        DOUBLE PRECISION,
-    next_5_day_price        DOUBLE PRECISION,
-    next_7_day_price        DOUBLE PRECISION,
-    next_10_day_price       DOUBLE PRECISION,
-    next_21_day_price       DOUBLE PRECISION,
-    next_30_day_price       DOUBLE PRECISION,
-    next_63_day_price       DOUBLE PRECISION,
-
-    -- Direction: 1 = up, 0 = down/flat
-    next_1_day_direction    SMALLINT,
-    next_3_day_direction    SMALLINT,
-    next_5_day_direction    SMALLINT,
-    next_7_day_direction    SMALLINT,
-    next_10_day_direction   SMALLINT,
-    next_21_day_direction   SMALLINT,
-    next_30_day_direction   SMALLINT,
-    next_63_day_direction   SMALLINT,
-
-    -- Price change %
-    next_1_day_price_change  DOUBLE PRECISION,
-    next_3_day_price_change  DOUBLE PRECISION,
-    next_5_day_price_change  DOUBLE PRECISION,
-    next_7_day_price_change  DOUBLE PRECISION,
-    next_10_day_price_change DOUBLE PRECISION,
-    next_21_day_price_change DOUBLE PRECISION,
-    next_30_day_price_change DOUBLE PRECISION,
-    next_63_day_price_change DOUBLE PRECISION,
 
     updated_at              TIMESTAMPTZ DEFAULT NOW()
 );
@@ -402,9 +407,7 @@ CREATE TABLE IF NOT EXISTS features.master_features (
     dxy_low             DOUBLE PRECISION,
     dxy_close           DOUBLE PRECISION,
     fed_funds_rate      DOUBLE PRECISION,
-    us_interest_rate    DOUBLE PRECISION,
     us_10y_yield        DOUBLE PRECISION,
-    us_inflation_yoy    DOUBLE PRECISION,
     cpi                 DOUBLE PRECISION,
     core_cpi            DOUBLE PRECISION,
     breakeven_inflation DOUBLE PRECISION,
@@ -426,6 +429,33 @@ CREATE TABLE IF NOT EXISTS features.master_features (
     gold_dxy_ratio      DOUBLE PRECISION,
     real_yield          DOUBLE PRECISION,
     oil_spread          DOUBLE PRECISION,
+
+    -- Interpretable external market drivers
+    gold_gap_pct                      DOUBLE PRECISION,
+    gold_intraday_return_pct          DOUBLE PRECISION,
+    gold_range_pct                    DOUBLE PRECISION,
+    gold_close_location               DOUBLE PRECISION,
+    dxy_return_5d                     DOUBLE PRECISION,
+    us_10y_real_yield                DOUBLE PRECISION,
+    real_yield_change_5d              DOUBLE PRECISION,
+    vix_change_5d                     DOUBLE PRECISION,
+    sp500_return_5d                   DOUBLE PRECISION,
+    gld_return_5d                     DOUBLE PRECISION,
+    gld_volume_zscore_21d             DOUBLE PRECISION,
+    tlt_return_5d                     DOUBLE PRECISION,
+    uup_return_5d                     DOUBLE PRECISION,
+    tip_return_5d                     DOUBLE PRECISION,
+    hyg_return_5d                     DOUBLE PRECISION,
+    economic_policy_uncertainty       DOUBLE PRECISION,
+    epu_zscore_63d                    DOUBLE PRECISION,
+    high_yield_spread                 DOUBLE PRECISION,
+    high_yield_spread_change_5d       DOUBLE PRECISION,
+    cftc_mm_net_pct_oi                DOUBLE PRECISION,
+    cftc_mm_net_change_pct_oi         DOUBLE PRECISION,
+    cftc_producer_net_pct_oi          DOUBLE PRECISION,
+    cftc_swap_net_pct_oi              DOUBLE PRECISION,
+    cftc_mm_net_zscore_52w            DOUBLE PRECISION,
+    cftc_positioning_age_days         INTEGER,
 
     -- Sliding Windows
     gold_avg_5d         DOUBLE PRECISION,
@@ -513,6 +543,31 @@ CREATE TABLE IF NOT EXISTS features.master_features (
 ALTER TABLE features.master_features
     ADD COLUMN IF NOT EXISTS gold_close DOUBLE PRECISION,
     ADD COLUMN IF NOT EXISTS gold_open DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS gold_gap_pct DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS gold_intraday_return_pct DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS gold_range_pct DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS gold_close_location DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS dxy_return_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS us_10y_real_yield DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS real_yield_change_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS vix_change_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS sp500_return_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS gld_return_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS gld_volume_zscore_21d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS tlt_return_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS uup_return_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS tip_return_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS hyg_return_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS economic_policy_uncertainty DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS epu_zscore_63d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS high_yield_spread DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS high_yield_spread_change_5d DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS cftc_mm_net_pct_oi DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS cftc_mm_net_change_pct_oi DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS cftc_producer_net_pct_oi DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS cftc_swap_net_pct_oi DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS cftc_mm_net_zscore_52w DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS cftc_positioning_age_days INTEGER,
     ADD COLUMN IF NOT EXISTS month_num INTEGER,
     ADD COLUMN IF NOT EXISTS quarter_num INTEGER,
     ADD COLUMN IF NOT EXISTS iso_week_num INTEGER,
@@ -575,18 +630,40 @@ ALTER TABLE features.target_labels
     ADD COLUMN IF NOT EXISTS next_7_day_open DOUBLE PRECISION,
     ADD COLUMN IF NOT EXISTS next_8_day_open DOUBLE PRECISION,
     ADD COLUMN IF NOT EXISTS next_9_day_open DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS next_10_day_open DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS next_5_day_price DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS next_10_day_price DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS next_21_day_price DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS next_63_day_price DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS next_5_day_direction SMALLINT,
-    ADD COLUMN IF NOT EXISTS next_10_day_direction SMALLINT,
-    ADD COLUMN IF NOT EXISTS next_21_day_direction SMALLINT,
-    ADD COLUMN IF NOT EXISTS next_63_day_direction SMALLINT,
-    ADD COLUMN IF NOT EXISTS next_5_day_price_change DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS next_10_day_price_change DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS next_21_day_price_change DOUBLE PRECISION,
-    ADD COLUMN IF NOT EXISTS next_63_day_price_change DOUBLE PRECISION;
+    ADD COLUMN IF NOT EXISTS next_10_day_open DOUBLE PRECISION;
+
+ALTER TABLE features.target_labels
+    DROP COLUMN IF EXISTS next_1_day_price,
+    DROP COLUMN IF EXISTS next_3_day_price,
+    DROP COLUMN IF EXISTS next_5_day_price,
+    DROP COLUMN IF EXISTS next_7_day_price,
+    DROP COLUMN IF EXISTS next_10_day_price,
+    DROP COLUMN IF EXISTS next_21_day_price,
+    DROP COLUMN IF EXISTS next_30_day_price,
+    DROP COLUMN IF EXISTS next_63_day_price,
+    DROP COLUMN IF EXISTS next_1_day_direction,
+    DROP COLUMN IF EXISTS next_3_day_direction,
+    DROP COLUMN IF EXISTS next_5_day_direction,
+    DROP COLUMN IF EXISTS next_7_day_direction,
+    DROP COLUMN IF EXISTS next_10_day_direction,
+    DROP COLUMN IF EXISTS next_21_day_direction,
+    DROP COLUMN IF EXISTS next_30_day_direction,
+    DROP COLUMN IF EXISTS next_63_day_direction,
+    DROP COLUMN IF EXISTS next_1_day_price_change,
+    DROP COLUMN IF EXISTS next_3_day_price_change,
+    DROP COLUMN IF EXISTS next_5_day_price_change,
+    DROP COLUMN IF EXISTS next_7_day_price_change,
+    DROP COLUMN IF EXISTS next_10_day_price_change,
+    DROP COLUMN IF EXISTS next_21_day_price_change,
+    DROP COLUMN IF EXISTS next_30_day_price_change,
+    DROP COLUMN IF EXISTS next_63_day_price_change;
+
+ALTER TABLE features.macro_features
+    DROP COLUMN IF EXISTS us_interest_rate,
+    DROP COLUMN IF EXISTS us_inflation_yoy;
+
+ALTER TABLE features.master_features
+    DROP COLUMN IF EXISTS us_interest_rate,
+    DROP COLUMN IF EXISTS us_inflation_yoy;
 
 CREATE INDEX IF NOT EXISTS idx_master_features_date ON features.master_features (date);

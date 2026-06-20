@@ -26,9 +26,6 @@ CREATE TABLE IF NOT EXISTS staging.daily_master (
 
     -- ── Silver ────────────────────────────────────────────────────────────
     silver_close        DOUBLE PRECISION,
-    silver_open         DOUBLE PRECISION,
-    silver_high         DOUBLE PRECISION,
-    silver_low          DOUBLE PRECISION,
 
     -- ── Oil ───────────────────────────────────────────────────────────────
     wti_oil_price       DOUBLE PRECISION,
@@ -51,9 +48,6 @@ CREATE TABLE IF NOT EXISTS staging.daily_master (
     core_cpi            DOUBLE PRECISION,   -- CPILFESL
     unemployment_rate   DOUBLE PRECISION,   -- UNRATE
     m2_money_supply     DOUBLE PRECISION,   -- M2SL
-    us_interest_rate    DOUBLE PRECISION,   -- deprecated source; kept for schema compatibility
-    us_inflation_yoy    DOUBLE PRECISION,   -- deprecated source; kept for schema compatibility
-    retail_sales        DOUBLE PRECISION,   -- RSXFS
 
     -- ── Metadata ──────────────────────────────────────────────────────────
     is_outlier          BOOLEAN          DEFAULT FALSE,
@@ -62,26 +56,12 @@ CREATE TABLE IF NOT EXISTS staging.daily_master (
 
 CREATE INDEX IF NOT EXISTS idx_staging_daily_date ON staging.daily_master (date);
 
--- ---------------------------------------------------------------------------
--- staging.monthly_master
--- Resample daily → monthly + FRED monthly
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS staging.monthly_master (
-    date                DATE             NOT NULL PRIMARY KEY,   -- month-end date
-    gold_close          DOUBLE PRECISION,
-    dxy_close           DOUBLE PRECISION,
-    silver_close        DOUBLE PRECISION,
-    wti_oil_price       DOUBLE PRECISION,
-    sp500_close         DOUBLE PRECISION,
-    vix                 DOUBLE PRECISION,
-    us_10y_yield        DOUBLE PRECISION,
-    us_2y_yield         DOUBLE PRECISION,
-    fed_funds_rate      DOUBLE PRECISION,
-    cpi                 DOUBLE PRECISION,
-    core_cpi            DOUBLE PRECISION,
-    unemployment_rate   DOUBLE PRECISION,
-    m2_money_supply     DOUBLE PRECISION,
-    us_interest_rate    DOUBLE PRECISION,
-    us_inflation_yoy    DOUBLE PRECISION,
-    updated_at          TIMESTAMPTZ      DEFAULT NOW()
-);
+ALTER TABLE staging.daily_master
+    DROP COLUMN IF EXISTS silver_open,
+    DROP COLUMN IF EXISTS silver_high,
+    DROP COLUMN IF EXISTS silver_low,
+    DROP COLUMN IF EXISTS us_interest_rate,
+    DROP COLUMN IF EXISTS us_inflation_yoy,
+    DROP COLUMN IF EXISTS retail_sales;
+
+DROP TABLE IF EXISTS staging.monthly_master;

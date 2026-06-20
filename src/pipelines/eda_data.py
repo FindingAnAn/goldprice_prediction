@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from config.settings import TARGET_COLUMN, TARGET_LABEL_COLUMNS
+from config.settings import OPEN_TARGET_COLUMNS
 from src.data.storage.postgres_client import get_engine
 
 
@@ -48,7 +48,7 @@ def load_master_features(limit: int | None = None) -> pd.DataFrame:
 
 def load_target_labels(
     limit: int | None = None,
-    target_col: str = TARGET_COLUMN,
+    target_col: str = OPEN_TARGET_COLUMNS[-1],
 ) -> pd.DataFrame:
     """Load features.target_labels ordered by date.
 
@@ -61,7 +61,7 @@ def load_target_labels(
     Returns:
         pd.DataFrame indexed by 'date' with target label columns.
     """
-    if target_col not in TARGET_LABEL_COLUMNS:
+    if target_col not in OPEN_TARGET_COLUMNS:
         raise ValueError(f"Unsupported target column: {target_col!r}")
 
     engine = get_engine()
@@ -111,9 +111,23 @@ def combine_with_targets(master_features: pd.DataFrame, target_labels: pd.DataFr
     target_columns = [
         column
         for column in target_labels.columns
-        if column in TARGET_LABEL_COLUMNS
+        if column in OPEN_TARGET_COLUMNS
     ]
     return master_features.join(target_labels[target_columns], how="inner")
+
+
+def add_open_target_changes(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add future-open percentage changes relative to the current close."""
+
+    result = frame.copy()
+    if "gold_close" not in result.columns:
+        return result
+    for horizon, target_column in enumerate(OPEN_TARGET_COLUMNS, start=1):
+        if target_column in result.columns:
+            result[f"next_{horizon}_day_open_change_pct"] = (
+                100.0 * (result[target_column] / result["gold_close"] - 1.0)
+            )
+    return result
 
 
 def summarize_missing_values(df: pd.DataFrame) -> pd.DataFrame:
@@ -147,7 +161,9 @@ def build_eda_bundle() -> EDADataBundle:
     else:
         current_gold = load_current_gold_close()
         analysis_frame = master_features.join(current_gold, how="left")
-    combined = combine_with_targets(analysis_frame, target_labels)
+    combined = add_open_target_changes(
+        combine_with_targets(analysis_frame, target_labels)
+    )
     missing_values = summarize_missing_values(master_features)
     return EDADataBundle(
         master_features=master_features,
@@ -161,6 +177,7 @@ def build_eda_bundle() -> EDADataBundle:
 __all__ = [
     "EDADataBundle",
     "build_eda_bundle",
+    "add_open_target_changes",
     "combine_with_targets",
     "load_current_gold_close",
     "load_master_features",

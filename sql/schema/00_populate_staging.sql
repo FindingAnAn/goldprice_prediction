@@ -47,14 +47,11 @@ ON CONFLICT (date) DO UPDATE SET
 -- ---------------------------------------------------------------------------
 -- Bước 3: Upsert Silver (SI=F)
 -- ---------------------------------------------------------------------------
-INSERT INTO staging.daily_master (date, silver_open, silver_high, silver_low, silver_close)
-SELECT date, open AS silver_open, high AS silver_high, low AS silver_low, close AS silver_close
+INSERT INTO staging.daily_master (date, silver_close)
+SELECT date, close AS silver_close
 FROM raw.yfinance_daily
 WHERE ticker = 'SI=F'
 ON CONFLICT (date) DO UPDATE SET
-    silver_open  = EXCLUDED.silver_open,
-    silver_high  = EXCLUDED.silver_high,
-    silver_low   = EXCLUDED.silver_low,
     silver_close = EXCLUDED.silver_close,
     updated_at   = NOW();
 
@@ -195,10 +192,7 @@ SET
     cpi              = monthly_pivot.cpi,
     core_cpi         = monthly_pivot.core_cpi,
     unemployment_rate= monthly_pivot.unemployment_rate,
-    m2_money_supply  = monthly_pivot.m2_money_supply,
-    us_interest_rate = NULL,
-    us_inflation_yoy = NULL,
-    retail_sales     = monthly_pivot.retail_sales
+    m2_money_supply  = monthly_pivot.m2_money_supply
 FROM (
     SELECT
         date,
@@ -206,8 +200,7 @@ FROM (
         MAX(CASE WHEN series_id = 'CPIAUCSL'        THEN value END) AS cpi,
         MAX(CASE WHEN series_id = 'CPILFESL'        THEN value END) AS core_cpi,
         MAX(CASE WHEN series_id = 'UNRATE'          THEN value END) AS unemployment_rate,
-        MAX(CASE WHEN series_id = 'M2SL'            THEN value END) AS m2_money_supply,
-        MAX(CASE WHEN series_id = 'RSXFS'           THEN value END) AS retail_sales
+        MAX(CASE WHEN series_id = 'M2SL'            THEN value END) AS m2_money_supply
     FROM raw.fred_monthly
     GROUP BY date
 ) monthly_pivot

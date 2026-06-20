@@ -79,24 +79,12 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# ─── Project Data (large files – do not commit) ───────────────────────────────
-# Strategy: ignore data FILES by extension (not folders), so .gitkeep in each
-# subfolder can still be tracked and folder structure is preserved on GitHub.
-data/**/*.csv
-data/**/*.parquet
-data/**/*.h5
-data/**/*.hdf5
-data/**/*.feather
-data/**/*.arrow
-data/**/*.pkl
-data/**/*.pickle
-data/**/*.joblib
-data/**/*.xlsx
-data/**/*.json
-data/**/*.jsonl
-# Allow .gitkeep so empty folder structure is preserved in git
+# Runtime data and generated artifacts
+data/**
+!data/**/
 !data/**/.gitkeep
-models/open_forecast/*.joblib
+models/open_forecast/
+!models/open_forecast/.gitkeep
 
 # IPython
 profile_default/

@@ -1,47 +1,54 @@
-# Data Sources Freshness
+# Data Sources and Freshness
 
-Snapshot kiểm tra trực tiếp ngày 19/06/2026:
+## Chính sách
 
-| Nguồn | Ngày mới nhất | Kết luận |
-|---|---:|---|
-| Yahoo Finance: gold, DXY, silver, S&P 500, VIX, oil futures | 18/06/2026 | Đúng latest market data |
-| Yahoo Finance: 10Y và 30Y yield indices | 18/06/2026 | Dùng bổ sung khi FRED lag |
-| FRED DGS10, DGS2, DGS30 | 16/06/2026 | Publication lag của nguồn |
-| FRED T10YIE, SP500, VIXCLS, T10Y2Y | 17/06/2026 | Publication lag của nguồn |
-| FRED DTWEXBGS | 12/06/2026 | Weekly/publication lag |
-| FRED monthly CPI, Core CPI, Fed Funds, Retail Sales, Unemployment | 01/05/2026 | Đúng chu kỳ monthly |
-| FRED M2 | 01/04/2026 | Đúng publication lag |
-| EIA WTI/Brent spot | 15/06/2026 | EIA lag; staging bổ sung tail bằng futures |
-| FreeGoldAPI | 20/02/2026 | Stale; chỉ giữ làm historical fallback |
+`DATA_START_DATE = 2010-01-01`. Khi `end=None`, Yahoo chỉ tải đến phiên Mỹ đã
+hoàn tất an toàn: ngày hiện tại sau 18:00 New York, nếu không thì phiên làm việc
+trước đó. Yahoo `end` là exclusive nên pipeline tự cộng một ngày.
 
-## Nguyên nhân database chưa có latest data
+## Nguồn
 
-Tại thời điểm kiểm tra, project không có `.env` và PostgreSQL trả về:
-`password authentication failed for user "postgres"`.
+| Nguồn | Dữ liệu | Freshness/availability |
+|---|---|---|
+| Yahoo Finance | GC=F và market proxies | Latest completed US session |
+| FreeGoldAPI | gold history | Fallback; có thể trễ |
+| FRED daily | rates, DXY, VIX, real yield, EPU, credit | Join từ observation date + 1 ngày |
+| FRED monthly | CPI, Fed funds, M2, unemployment | Lưu DB nhưng cấm model |
+| CFTC | weekly gold positioning | Tuesday report, available Friday (+3 ngày) |
+| EIA | WTI/Brent | Yahoo futures fallback khi thiếu key/lỗi |
 
-API vẫn gọi được, nhưng ingestion không thể upsert vào raw tables. Cần tạo
-`.env` từ `.env.example` với đúng `DB_PASSWORD` và `DB_NAME`.
+Annual CFTC archives cung cấp lịch sử; current report được append để tránh độ
+trễ của archive năm hiện tại.
 
-## Các sửa đổi
+## Series có giới hạn lịch sử
 
-- Yahoo Finance nhận `--end` theo nghĩa inclusive, sau đó chuyển sang end
-  exclusive theo API Yahoo.
-- FRED tự dùng public CSV chính thức nếu không có API key.
-- Bỏ series ID `USINTR` không tồn tại và annual series bị khai báo sai monthly.
-- EIA spot giữ ưu tiên; ngày EIA chưa công bố được bổ sung bằng CL=F/BZ=F.
-- 10Y/30Y FRED lag được bổ sung bằng `^TNX`/`^TYX`.
-- Sửa upsert làm phát sinh cột giả `index`.
-- Conflict update cập nhật lại `updated_at`.
-- Schema pipeline chỉ chạy DDL `01/02/03`; không chạy populate trước khi bảng tồn tại.
-- Feature pipeline chạy EWMA trước `master_features`, tránh dữ liệu lệch một vòng.
+FRED `BAMLH0A0HYM2` hiện chỉ phân phối khoảng ba năm gần nhất. Series vẫn có
+giá trị phân tích stress tín dụng nhưng không được phép làm co sequence dataset.
+Sequence preparation chỉ giữ exogenous feature có coverage tối thiểu 80%.
 
-## Lệnh kiểm tra
+## Kiểm tra
 
-```bash
+```powershell
 python scripts/check_data_freshness.py
-python scripts/run_ingestion.py --start 2000-01-01
 ```
 
-Không kỳ vọng tất cả nguồn có ngày 18–19/06/2026. Daily market data có thể đến
-18/06; FRED và EIA có publication lag; monthly data có observation date theo
-tháng gần nhất đã công bố.
+Lệnh gọi API gần hiện tại và đọc `MAX(date)`/`MAX(available_date)` trong DB.
+Không đồng nhất ngày giữa các nguồn là bình thường do lịch giao dịch và lịch
+phát hành khác nhau.
+
+## Điều kiện chặn full refresh
+
+Pipeline fail nếu thiếu gold, Yahoo GC=F, FRED DFII10, FRED USEPUINDXD, CFTC
+hoặc nếu feature/staging có dưới 1.000 dòng.
+
+## Rủi ro còn lại
+
+- Yahoo Finance không có SLA chính thức.
+- FRED daily lag +1 là approximation, không thay thế ALFRED vintage.
+- CFTC có thể hoãn phát hành dịp lễ.
+- CME holiday calendar chưa được dùng cho `forecast_date`.
+
+Nguồn chính thức:
+
+- [CFTC current disaggregated futures report](https://www.cftc.gov/dea/newcot/f_disagg.txt)
+- [FRED BAMLH0A0HYM2](https://fred.stlouisfed.org/series/BAMLH0A0HYM2)

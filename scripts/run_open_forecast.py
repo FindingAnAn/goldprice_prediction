@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 import shutil
 import sys
@@ -19,15 +18,17 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import (
+    DEEP_FORECAST_DEFAULT_MAX_STEPS,
+    DEEP_FORECAST_DEFAULT_WINDOWS,
+    DEEP_FORECAST_MODELS,
     OPEN_FORECAST_CV_SPLITS,
     OPEN_FORECAST_HORIZON,
     OPEN_FORECAST_MODEL_CONFIG,
     OPEN_FORECAST_RANDOM_SEED,
     OPEN_FORECAST_TEST_SIZE,
     OPEN_TARGET_COLUMNS,
-    SQL_DIR,
+    DATA_START_DATE,
 )
-from src.data.storage.postgres_client import run_schema_pipeline
 from src.experiments.tracking import (
     complete_run,
     create_run_paths,
@@ -45,8 +46,15 @@ from src.experiments.tracking import (
 )
 from src.modeling.open_forecast import (
     build_open_training_frame,
+    next_estimated_session_dates,
     predict_next_opens,
     train_open_forecast,
+)
+from src.modeling.forecast_explanations import add_forecast_context
+from src.modeling.sequence_forecast import benchmark_sequence_models
+from src.pipelines.ingestion import (
+    prepare_database_schema,
+    run_ingestion_pipeline,
 )
 from src.utils.logging_config import (
     clear_log_context,
@@ -65,6 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-size", type=float, default=OPEN_FORECAST_TEST_SIZE)
     parser.add_argument("--cv-splits", type=int, default=OPEN_FORECAST_CV_SPLITS)
     parser.add_argument("--random-seed", type=int, default=OPEN_FORECAST_RANDOM_SEED)
+    parser.add_argument(
+        "--deep-windows",
+        type=int,
+        default=DEEP_FORECAST_DEFAULT_WINDOWS,
+    )
+    parser.add_argument(
+        "--deep-max-steps",
+        type=int,
+        default=DEEP_FORECAST_DEFAULT_MAX_STEPS,
+    )
     parser.add_argument("--log-level", default=None)
     return parser
 
@@ -96,6 +114,17 @@ def main() -> None:
         "model_config": OPEN_FORECAST_MODEL_CONFIG,
         "forecast_date_policy": "US federal business-day estimate",
         "prediction_cutoff": "after completed gold session",
+        "data_refresh": {
+            "mode": "truncate_raw_staging_features_then_reingest",
+            "start": DATA_START_DATE,
+            "end": "latest_completed_session",
+            "forecasting_schema_preserved": True,
+        },
+        "mandatory_deep_models": {
+            "models": list(DEEP_FORECAST_MODELS),
+            "rolling_windows": args.deep_windows,
+            "max_steps": args.deep_max_steps,
+        },
     }
 
     logger.info(
@@ -109,9 +138,8 @@ def main() -> None:
     )
 
     try:
-        with StageTimer("prepare_schema", stages):
-            run_schema_pipeline(SQL_DIR)
-
+        with StageTimer("prepare_database_schema", stages):
+            prepare_database_schema()
         start_run(
             {
                 "run_id": run_id,
@@ -131,6 +159,15 @@ def main() -> None:
             }
         )
         db_started = True
+
+        with StageTimer("full_refresh_ingestion", stages):
+            run_ingestion_pipeline(
+                start=DATA_START_DATE,
+                end=None,
+                prepare_schema=False,
+                full_refresh=True,
+                validate=True,
+            )
 
         with StageTimer("load_training_data", stages):
             frame = build_open_training_frame()
@@ -157,22 +194,164 @@ def main() -> None:
                 cv_splits=args.cv_splits,
             )
 
+        with StageTimer("train_mandatory_deep_models", stages):
+            sequence_result = benchmark_sequence_models(
+                n_windows=args.deep_windows,
+                max_steps=args.deep_max_steps,
+                master_features=frame,
+            )
+            deep_metrics = sequence_result.metrics
+            deep_predictions = sequence_result.rolling_predictions
+            deep_future_predictions = sequence_result.future_predictions
+            future_dates = next_estimated_session_dates(
+                as_of_date,
+                periods=OPEN_FORECAST_HORIZON,
+            )
+            deep_future_predictions["forecast_date"] = future_dates.date
+            deep_future_predictions["forecast_step"] = np.arange(
+                1,
+                OPEN_FORECAST_HORIZON + 1,
+            )
+            deep_candidate_rows: list[dict[str, object]] = []
+            deep_metric_rows: list[dict[str, object]] = []
+            for model_name, group in deep_metrics.groupby("model"):
+                deep_candidate_rows.append(
+                    {
+                        "model": f"deep_{model_name}",
+                        "selected": False,
+                        "parameters": {
+                            "model_family": "deep_sequence",
+                            "evaluation_protocol": "rolling_fixed_model",
+                            "mandatory": True,
+                            "windows": args.deep_windows,
+                            "max_steps": args.deep_max_steps,
+                            "sequence_rows": sequence_result.sequence_rows,
+                            "used_exogenous_features": list(
+                                sequence_result.used_exogenous_features
+                            ),
+                            "excluded_exogenous_features": list(
+                                sequence_result.excluded_exogenous_features
+                            ),
+                        },
+                        "cv_rmse": float(group["rmse"].mean()),
+                        "holdout_rmse": None,
+                        "holdout_mae": None,
+                        "holdout_mape": None,
+                        "holdout_r2": None,
+                        "rmse_improvement_vs_persistence_pct": float(
+                            group[
+                                "rmse_improvement_vs_persistence_pct"
+                            ].mean()
+                        ),
+                        "training_seconds": sequence_result.training_seconds[
+                            model_name
+                        ],
+                        "artifact_path": str(
+                            paths.deep_model_directory / model_name
+                        ),
+                    }
+                )
+                for row in group.itertuples(index=False):
+                    for metric_name in (
+                        "rmse",
+                        "mae",
+                        "mape",
+                        "direction_accuracy",
+                        "persistence_rmse",
+                        "rmse_improvement_vs_persistence_pct",
+                    ):
+                        deep_metric_rows.append(
+                            {
+                                "model_name": f"deep_{model_name}",
+                                "split_name": "rolling_cv",
+                                "horizon_step": int(row.horizon),
+                                "metric_name": metric_name,
+                                "metric_value": getattr(row, metric_name),
+                                "sample_count": int(row.windows),
+                            }
+                        )
+            persistence_rolling_rmse = float(
+                deep_metrics[
+                    ["horizon", "persistence_rmse"]
+                ]
+                .drop_duplicates("horizon")["persistence_rmse"]
+                .mean()
+            )
+            baseline_leaderboard = result.leaderboard.copy()
+            baseline_leaderboard["cv_rmse"] = persistence_rolling_rmse
+            baseline_leaderboard[
+                "rmse_improvement_vs_persistence_pct"
+            ] = 0.0
+            leaderboard = pd.concat(
+                [
+                    baseline_leaderboard,
+                    pd.DataFrame(deep_candidate_rows),
+                ],
+                ignore_index=True,
+            )
+            leaderboard["selected"] = False
+            selected_name = str(
+                leaderboard.sort_values("cv_rmse").iloc[0]["model"]
+            )
+            leaderboard.loc[
+                leaderboard["model"] == selected_name,
+                "selected",
+            ] = True
+            metrics = pd.concat(
+                [
+                    result.metrics,
+                    pd.DataFrame(deep_metric_rows),
+                ],
+                ignore_index=True,
+            )
+
         with StageTimer("persist_artifacts", stages):
             joblib.dump(result.production_model, paths.model)
             joblib.dump(result.holdout_model, paths.holdout_model)
-            result.leaderboard.loc[
-                result.leaderboard["selected"],
+            for model_name, forecaster in (
+                sequence_result.fitted_forecasters.items()
+            ):
+                forecaster.save(
+                    path=str(paths.deep_model_directory / model_name),
+                    save_dataset=True,
+                    overwrite=True,
+                )
+            leaderboard.loc[
+                (leaderboard["selected"])
+                & (leaderboard["model"] == "persistence_close"),
                 "artifact_path",
             ] = str(paths.model)
-            result.leaderboard.to_csv(paths.leaderboard, index=False)
-            result.metrics.to_csv(paths.metrics, index=False)
+            leaderboard.to_csv(paths.leaderboard, index=False)
+            metrics.to_csv(paths.metrics, index=False)
+            deep_metrics.to_csv(paths.deep_model_metrics, index=False)
+            deep_predictions.to_csv(
+                paths.deep_model_predictions,
+                index=False,
+            )
+            deep_future_predictions.to_csv(
+                paths.deep_model_future_predictions,
+                index=False,
+            )
             result.holdout_predictions.to_csv(
                 paths.holdout_predictions,
                 index=False,
             )
             write_json(
                 paths.feature_list,
-                {"feature_columns": result.feature_columns},
+                {
+                    "tabular_baseline_features": result.feature_columns,
+                    "sequence_exogenous_features": list(
+                        sequence_result.used_exogenous_features
+                    ),
+                    "excluded_sequence_exogenous_features": list(
+                        sequence_result.excluded_exogenous_features
+                    ),
+                    "sequence_rows": sequence_result.sequence_rows,
+                    "sequence_start_date": (
+                        sequence_result.sequence_start_date
+                    ),
+                    "sequence_end_date": sequence_result.sequence_end_date,
+                },
             )
 
             latest_model_dir = PROJECT_ROOT / "models" / "open_forecast"
@@ -180,6 +359,21 @@ def main() -> None:
             versioned_model = latest_model_dir / f"{run_id}.joblib"
             shutil.copy2(paths.model, versioned_model)
             shutil.copy2(paths.model, latest_model_dir / "latest_model.joblib")
+            if selected_name.startswith("deep_"):
+                selected_alias = selected_name.removeprefix("deep_")
+                selected_forecaster = (
+                    sequence_result.fitted_forecasters[selected_alias]
+                )
+                selected_forecaster.save(
+                    path=str(latest_model_dir / f"{run_id}_deep"),
+                    save_dataset=True,
+                    overwrite=True,
+                )
+                selected_forecaster.save(
+                    path=str(latest_model_dir / "latest_deep"),
+                    save_dataset=True,
+                    overwrite=True,
+                )
 
         with StageTimer("verify_model_artifact", stages):
             reloaded_model = joblib.load(paths.model)
@@ -196,9 +390,59 @@ def main() -> None:
                 rtol=1e-10,
                 atol=1e-10,
             )
+            from neuralforecast import NeuralForecast
+
+            for model_name in DEEP_FORECAST_MODELS:
+                reloaded_deep = NeuralForecast.load(
+                    str(paths.deep_model_directory / model_name),
+                )
+                reloaded_deep_prediction = (
+                    reloaded_deep.predict().reset_index()
+                )
+                np.testing.assert_allclose(
+                    np.exp(reloaded_deep_prediction[model_name].to_numpy()),
+                    deep_future_predictions[model_name].to_numpy(),
+                    rtol=1e-5,
+                    atol=1e-5,
+                )
 
         with StageTimer("generate_forecast", stages):
             predictions = predict_next_opens(reloaded_model)
+            if selected_name.startswith("deep_"):
+                deep_alias = selected_name.removeprefix("deep_")
+                predictions["predicted_open"] = deep_future_predictions[
+                    deep_alias
+                ].to_numpy()
+                residuals = deep_predictions.assign(
+                    absolute_residual=lambda data: np.abs(
+                        data["actual_price"] - data[deep_alias]
+                    )
+                )
+                interval_80 = (
+                    residuals.groupby("step")["absolute_residual"]
+                    .quantile(0.80)
+                    .reindex(range(1, OPEN_FORECAST_HORIZON + 1))
+                    .to_numpy()
+                )
+                interval_95 = (
+                    residuals.groupby("step")["absolute_residual"]
+                    .quantile(0.95)
+                    .reindex(range(1, OPEN_FORECAST_HORIZON + 1))
+                    .to_numpy()
+                )
+                predictions["lower_80"] = (
+                    predictions["predicted_open"] - interval_80
+                )
+                predictions["upper_80"] = (
+                    predictions["predicted_open"] + interval_80
+                )
+                predictions["lower_95"] = (
+                    predictions["predicted_open"] - interval_95
+                )
+                predictions["upper_95"] = (
+                    predictions["predicted_open"] + interval_95
+                )
+            predictions = add_forecast_context(predictions, frame)
             predictions.to_csv(paths.predictions, index=False)
             logger.info(
                 "Open forecast generated",
@@ -212,13 +456,14 @@ def main() -> None:
                     "last_forecast_date": str(
                         predictions.iloc[-1]["forecast_date"]
                     ),
+                    "selected_model": selected_name,
                 },
             )
 
         database_started = time.perf_counter()
         try:
-            save_candidates(run_id, result.leaderboard)
-            save_metrics(run_id, result.metrics)
+            save_candidates(run_id, leaderboard)
+            save_metrics(run_id, metrics)
             save_predictions(run_id, predictions)
             database_status = "completed"
         except Exception:
@@ -245,6 +490,11 @@ def main() -> None:
         resource_payload["holdout_model_size_bytes"] = (
             paths.holdout_model.stat().st_size
         )
+        resource_payload["deep_model_size_bytes"] = sum(
+            file.stat().st_size
+            for file in paths.deep_model_directory.rglob("*")
+            if file.is_file()
+        )
         resource_payload["prediction_rows_per_second"] = (
             len(predictions) / float(generate_stage["duration_seconds"])
         )
@@ -258,7 +508,7 @@ def main() -> None:
             {
                 "completed_at": completed_at,
                 "as_of_date": as_of_date,
-                "selected_model": result.selected_name,
+                "selected_model": selected_name,
                 "model_version": run_id,
                 "data_hash": data_hash,
                 "feature_count": len(result.feature_columns),
@@ -294,7 +544,7 @@ def main() -> None:
             "completed_at": completed_at,
             "duration_seconds": duration_seconds,
             "as_of_date": as_of_date,
-            "selected_model": result.selected_name,
+            "selected_model": selected_name,
             "model_version": run_id,
             "data_hash": data_hash,
             "feature_count": len(result.feature_columns),
@@ -316,13 +566,13 @@ def main() -> None:
             "Open forecast run completed",
             extra={
                 "stage": "run",
-                "selected_model": result.selected_name,
+                "selected_model": selected_name,
                 "duration_seconds": duration_seconds,
                 "artifact_dir": str(paths.directory),
             },
         )
         print(f"Run ID: {run_id}")
-        print(f"Selected model: {result.selected_name}")
+        print(f"Selected model: {selected_name}")
         print(f"Artifacts: {paths.directory}")
         print(predictions.to_string(index=False))
     except Exception as error:

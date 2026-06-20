@@ -51,7 +51,7 @@ SELECT
     NOW()
 FROM staging.daily_master
 WHERE gold_close IS NOT NULL
-  AND date >= '2000-01-01'
+  AND date >= '2010-01-01'
 ON CONFLICT (date) DO UPDATE SET
     gold_silver_ratio = EXCLUDED.gold_silver_ratio,
     gold_oil_ratio    = EXCLUDED.gold_oil_ratio,

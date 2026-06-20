@@ -5,34 +5,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 import time
-from typing import Callable
-
 import numpy as np
 import pandas as pd
 from pandas.tseries.holiday import USFederalHolidayCalendar
 from pandas.tseries.offsets import CustomBusinessDay
 from sklearn.base import BaseEstimator, RegressorMixin, clone
-from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import Ridge
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
     r2_score,
 )
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 from config.settings import (
     OPEN_FORECAST_CV_SPLITS,
     OPEN_FORECAST_HORIZON,
-    OPEN_FORECAST_MODEL_CONFIG,
     OPEN_FORECAST_RANDOM_SEED,
     OPEN_FORECAST_TEST_SIZE,
     OPEN_TARGET_COLUMNS,
 )
-from src.modeling.train import (
+from src.modeling.time_series import (
     infer_feature_columns,
     time_series_train_test_split,
     validate_feature_columns,
@@ -57,26 +49,6 @@ class MultiHorizonPersistenceRegressor(BaseEstimator, RegressorMixin):
     def predict(self, X: np.ndarray) -> np.ndarray:
         current = np.asarray(X[:, self.current_price_index], dtype=float)
         return np.repeat(current[:, None], self.horizon, axis=1)
-
-
-class MultiHorizonReturnRegressor(BaseEstimator, RegressorMixin):
-    """Learn future-open returns relative to the current close."""
-
-    def __init__(self, base_estimator: object, current_price_index: int):
-        self.base_estimator = base_estimator
-        self.current_price_index = current_price_index
-
-    def fit(self, X: np.ndarray, y: np.ndarray) -> "MultiHorizonReturnRegressor":
-        current = np.asarray(X[:, self.current_price_index], dtype=float)
-        returns = (np.asarray(y, dtype=float) / current[:, None] - 1.0) * 100.0
-        self.estimator_ = clone(self.base_estimator)
-        self.estimator_.fit(X, returns)
-        return self
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        current = np.asarray(X[:, self.current_price_index], dtype=float)
-        returns = np.asarray(self.estimator_.predict(X), dtype=float)
-        return current[:, None] * (1.0 + returns / 100.0)
 
 
 @dataclass(frozen=True)
@@ -125,44 +97,6 @@ def _candidate_models(
     current_price_index: int,
     random_seed: int,
 ) -> dict[str, tuple[object, dict[str, object]]]:
-    config = OPEN_FORECAST_MODEL_CONFIG
-    ridge = Pipeline(
-        [
-            ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
-            ("scaler", StandardScaler()),
-            ("model", Ridge(alpha=float(config["ridge_alpha"]))),
-        ]
-    )
-    extra_trees = Pipeline(
-        [
-            ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
-            (
-                "model",
-                ExtraTreesRegressor(
-                    n_estimators=int(config["extra_trees_estimators"]),
-                    min_samples_leaf=int(config["extra_trees_min_samples_leaf"]),
-                    max_features=float(config["extra_trees_max_features"]),
-                    random_state=random_seed,
-                    n_jobs=-1,
-                ),
-            ),
-        ]
-    )
-    random_forest = Pipeline(
-        [
-            ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
-            (
-                "model",
-                RandomForestRegressor(
-                    n_estimators=int(config["random_forest_estimators"]),
-                    min_samples_leaf=int(config["random_forest_min_samples_leaf"]),
-                    max_features=float(config["random_forest_max_features"]),
-                    random_state=random_seed,
-                    n_jobs=-1,
-                ),
-            ),
-        ]
-    )
     return {
         "persistence_close": (
             MultiHorizonPersistenceRegressor(
@@ -170,26 +104,6 @@ def _candidate_models(
                 horizon=OPEN_FORECAST_HORIZON,
             ),
             {},
-        ),
-        "return_ridge": (
-            MultiHorizonReturnRegressor(ridge, current_price_index),
-            {"ridge_alpha": config["ridge_alpha"]},
-        ),
-        "return_extra_trees": (
-            MultiHorizonReturnRegressor(extra_trees, current_price_index),
-            {
-                "n_estimators": config["extra_trees_estimators"],
-                "min_samples_leaf": config["extra_trees_min_samples_leaf"],
-                "max_features": config["extra_trees_max_features"],
-            },
-        ),
-        "return_random_forest": (
-            MultiHorizonReturnRegressor(random_forest, current_price_index),
-            {
-                "n_estimators": config["random_forest_estimators"],
-                "min_samples_leaf": config["random_forest_min_samples_leaf"],
-                "max_features": config["random_forest_max_features"],
-            },
         ),
     }
 
@@ -498,7 +412,6 @@ def predict_next_opens(
 
 __all__ = [
     "MultiHorizonPersistenceRegressor",
-    "MultiHorizonReturnRegressor",
     "OpenForecastTrainingResult",
     "build_open_training_frame",
     "load_open_targets",

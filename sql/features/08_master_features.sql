@@ -24,14 +24,26 @@ INSERT INTO features.master_features (
     adx_14, plus_di, minus_di, z_score_20, z_score_60,
     -- Macro
     dxy_open, dxy_high, dxy_low, dxy_close,
-    fed_funds_rate, us_interest_rate, us_10y_yield,
-    us_inflation_yoy, cpi, core_cpi, breakeven_inflation,
+    fed_funds_rate, us_10y_yield,
+    cpi, core_cpi, breakeven_inflation,
     us_2y_yield, us_30y_yield, yield_curve_slope,
     m2_money_supply, unemployment_rate, vix, sp500_close,
     silver_close, wti_oil_price, brent_oil_price,
     -- Ratios
     gold_silver_ratio, gold_oil_ratio, gold_sp500_ratio, gold_dxy_ratio,
     real_yield, oil_spread,
+    -- Interpretable market drivers
+    gold_gap_pct, gold_intraday_return_pct, gold_range_pct,
+    gold_close_location, dxy_return_5d, us_10y_real_yield,
+    real_yield_change_5d,
+    vix_change_5d, sp500_return_5d, gld_return_5d,
+    gld_volume_zscore_21d, tlt_return_5d, uup_return_5d,
+    tip_return_5d, hyg_return_5d,
+    economic_policy_uncertainty, epu_zscore_63d,
+    high_yield_spread, high_yield_spread_change_5d,
+    cftc_mm_net_pct_oi, cftc_mm_net_change_pct_oi,
+    cftc_producer_net_pct_oi, cftc_swap_net_pct_oi,
+    cftc_mm_net_zscore_52w, cftc_positioning_age_days,
     -- Sliding Windows
     gold_avg_5d,   gold_pct_chg_5d,
     gold_avg_21d,  gold_pct_chg_21d,
@@ -79,14 +91,26 @@ SELECT
     ti.adx_14, ti.plus_di, ti.minus_di, ti.z_score_20, ti.z_score_60,
     -- Macro
     mf.dxy_open, mf.dxy_high, mf.dxy_low, mf.dxy_close,
-    mf.fed_funds_rate, mf.us_interest_rate, mf.us_10y_yield,
-    mf.us_inflation_yoy, mf.cpi, mf.core_cpi, mf.breakeven_inflation,
+    mf.fed_funds_rate, mf.us_10y_yield,
+    mf.cpi, mf.core_cpi, mf.breakeven_inflation,
     mf.us_2y_yield, mf.us_30y_yield, mf.yield_curve_slope,
     mf.m2_money_supply, mf.unemployment_rate, mf.vix, mf.sp500_close,
     s.silver_close, s.wti_oil_price, s.brent_oil_price,
     -- Ratios
     rf.gold_silver_ratio, rf.gold_oil_ratio, rf.gold_sp500_ratio, rf.gold_dxy_ratio,
     rf.real_yield, rf.oil_spread,
+    -- Interpretable market drivers
+    md.gold_gap_pct, md.gold_intraday_return_pct, md.gold_range_pct,
+    md.gold_close_location, md.dxy_return_5d, md.us_10y_real_yield,
+    md.real_yield_change_5d,
+    md.vix_change_5d, md.sp500_return_5d, md.gld_return_5d,
+    md.gld_volume_zscore_21d, md.tlt_return_5d, md.uup_return_5d,
+    md.tip_return_5d, md.hyg_return_5d,
+    md.economic_policy_uncertainty, md.epu_zscore_63d,
+    md.high_yield_spread, md.high_yield_spread_change_5d,
+    md.cftc_mm_net_pct_oi, md.cftc_mm_net_change_pct_oi,
+    md.cftc_producer_net_pct_oi, md.cftc_swap_net_pct_oi,
+    md.cftc_mm_net_zscore_52w, md.cftc_positioning_age_days,
     -- Sliding Windows
     sw.gold_avg_5d,   sw.gold_pct_chg_5d,
     sw.gold_avg_21d,  sw.gold_pct_chg_21d,
@@ -128,10 +152,11 @@ LEFT JOIN features.momentum_indicators   mi ON s.date = mi.date
 LEFT JOIN features.trend_indicators      ti ON s.date = ti.date
 LEFT JOIN features.macro_features        mf ON s.date = mf.date
 LEFT JOIN features.ratio_features        rf ON s.date = rf.date
+LEFT JOIN features.market_driver_features md ON s.date = md.date
 LEFT JOIN features.sliding_windows       sw ON s.date = sw.date
 LEFT JOIN features.ewma_features         ew ON s.date = ew.date
 LEFT JOIN features.seasonality_features  sf ON s.date = sf.date
 WHERE s.gold_close IS NOT NULL
-  AND s.date >= '2000-01-01'
+  AND s.date >= '2010-01-01'
   AND s.is_outlier = FALSE   -- loại bỏ outlier rows
 ORDER BY s.date;

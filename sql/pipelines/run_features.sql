@@ -28,5 +28,11 @@
 -- Bước 8: EWMA Features (7d/30d/90d/365d calendar exponential weights)
 \i sql/features/09_ewma_features.sql
 
--- Bước 9: Master Features (JOIN features + current OHLCV; không có future targets)
+-- Bước 9: Calendar/analog seasonality
+\i sql/features/10_seasonality_features.sql
+
+-- Bước 10: External market, uncertainty and CFTC positioning drivers
+\i sql/features/11_market_driver_features.sql
+
+-- Bước 11: Master Features (JOIN features + current OHLCV; không có future targets)
 \i sql/features/08_master_features.sql

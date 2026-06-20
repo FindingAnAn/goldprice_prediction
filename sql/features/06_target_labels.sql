@@ -1,12 +1,9 @@
--- =============================================================================
--- Future target labels at trading-session horizons.
--- These columns are isolated from master_features and must never be model input.
--- =============================================================================
+-- Future gold-open targets for the next 10 trading sessions.
+-- Targets remain isolated from features.master_features.
 
-WITH future_prices AS (
+WITH future_opens AS (
     SELECT
         date,
-        gold_close,
         LEAD(gold_open, 1)  OVER (ORDER BY date) AS open_1d,
         LEAD(gold_open, 2)  OVER (ORDER BY date) AS open_2d,
         LEAD(gold_open, 3)  OVER (ORDER BY date) AS open_3d,
@@ -16,58 +13,40 @@ WITH future_prices AS (
         LEAD(gold_open, 7)  OVER (ORDER BY date) AS open_7d,
         LEAD(gold_open, 8)  OVER (ORDER BY date) AS open_8d,
         LEAD(gold_open, 9)  OVER (ORDER BY date) AS open_9d,
-        LEAD(gold_open, 10) OVER (ORDER BY date) AS open_10d,
-        LEAD(gold_close, 1)  OVER (ORDER BY date) AS price_1d,
-        LEAD(gold_close, 3)  OVER (ORDER BY date) AS price_3d,
-        LEAD(gold_close, 5)  OVER (ORDER BY date) AS price_5d,
-        LEAD(gold_close, 7)  OVER (ORDER BY date) AS price_7d,
-        LEAD(gold_close, 10) OVER (ORDER BY date) AS price_10d,
-        LEAD(gold_close, 21) OVER (ORDER BY date) AS price_21d,
-        LEAD(gold_close, 30) OVER (ORDER BY date) AS price_30d,
-        LEAD(gold_close, 63) OVER (ORDER BY date) AS price_63d
+        LEAD(gold_open, 10) OVER (ORDER BY date) AS open_10d
     FROM staging.daily_master
     WHERE gold_close IS NOT NULL
-      AND date >= '2000-01-01'
+      AND gold_open IS NOT NULL
+      AND date >= '2010-01-01'
 )
 INSERT INTO features.target_labels (
     date,
-    next_1_day_open, next_2_day_open, next_3_day_open, next_4_day_open,
-    next_5_day_open, next_6_day_open, next_7_day_open, next_8_day_open,
-    next_9_day_open, next_10_day_open,
-    next_1_day_price, next_3_day_price, next_5_day_price, next_7_day_price,
-    next_10_day_price, next_21_day_price, next_30_day_price, next_63_day_price,
-    next_1_day_direction, next_3_day_direction, next_5_day_direction,
-    next_7_day_direction, next_10_day_direction, next_21_day_direction,
-    next_30_day_direction, next_63_day_direction,
-    next_1_day_price_change, next_3_day_price_change, next_5_day_price_change,
-    next_7_day_price_change, next_10_day_price_change, next_21_day_price_change,
-    next_30_day_price_change, next_63_day_price_change,
+    next_1_day_open,
+    next_2_day_open,
+    next_3_day_open,
+    next_4_day_open,
+    next_5_day_open,
+    next_6_day_open,
+    next_7_day_open,
+    next_8_day_open,
+    next_9_day_open,
+    next_10_day_open,
     updated_at
 )
 SELECT
     date,
-    open_1d, open_2d, open_3d, open_4d, open_5d,
-    open_6d, open_7d, open_8d, open_9d, open_10d,
-    price_1d, price_3d, price_5d, price_7d,
-    price_10d, price_21d, price_30d, price_63d,
-    CASE WHEN price_1d  > gold_close THEN 1 WHEN price_1d  IS NOT NULL THEN 0 END,
-    CASE WHEN price_3d  > gold_close THEN 1 WHEN price_3d  IS NOT NULL THEN 0 END,
-    CASE WHEN price_5d  > gold_close THEN 1 WHEN price_5d  IS NOT NULL THEN 0 END,
-    CASE WHEN price_7d  > gold_close THEN 1 WHEN price_7d  IS NOT NULL THEN 0 END,
-    CASE WHEN price_10d > gold_close THEN 1 WHEN price_10d IS NOT NULL THEN 0 END,
-    CASE WHEN price_21d > gold_close THEN 1 WHEN price_21d IS NOT NULL THEN 0 END,
-    CASE WHEN price_30d > gold_close THEN 1 WHEN price_30d IS NOT NULL THEN 0 END,
-    CASE WHEN price_63d > gold_close THEN 1 WHEN price_63d IS NOT NULL THEN 0 END,
-    CASE WHEN gold_close > 0 THEN 100.0 * (price_1d  / gold_close - 1.0) END,
-    CASE WHEN gold_close > 0 THEN 100.0 * (price_3d  / gold_close - 1.0) END,
-    CASE WHEN gold_close > 0 THEN 100.0 * (price_5d  / gold_close - 1.0) END,
-    CASE WHEN gold_close > 0 THEN 100.0 * (price_7d  / gold_close - 1.0) END,
-    CASE WHEN gold_close > 0 THEN 100.0 * (price_10d / gold_close - 1.0) END,
-    CASE WHEN gold_close > 0 THEN 100.0 * (price_21d / gold_close - 1.0) END,
-    CASE WHEN gold_close > 0 THEN 100.0 * (price_30d / gold_close - 1.0) END,
-    CASE WHEN gold_close > 0 THEN 100.0 * (price_63d / gold_close - 1.0) END,
+    open_1d,
+    open_2d,
+    open_3d,
+    open_4d,
+    open_5d,
+    open_6d,
+    open_7d,
+    open_8d,
+    open_9d,
+    open_10d,
     NOW()
-FROM future_prices
+FROM future_opens
 ON CONFLICT (date) DO UPDATE SET
     next_1_day_open = EXCLUDED.next_1_day_open,
     next_2_day_open = EXCLUDED.next_2_day_open,
@@ -79,28 +58,4 @@ ON CONFLICT (date) DO UPDATE SET
     next_8_day_open = EXCLUDED.next_8_day_open,
     next_9_day_open = EXCLUDED.next_9_day_open,
     next_10_day_open = EXCLUDED.next_10_day_open,
-    next_1_day_price = EXCLUDED.next_1_day_price,
-    next_3_day_price = EXCLUDED.next_3_day_price,
-    next_5_day_price = EXCLUDED.next_5_day_price,
-    next_7_day_price = EXCLUDED.next_7_day_price,
-    next_10_day_price = EXCLUDED.next_10_day_price,
-    next_21_day_price = EXCLUDED.next_21_day_price,
-    next_30_day_price = EXCLUDED.next_30_day_price,
-    next_63_day_price = EXCLUDED.next_63_day_price,
-    next_1_day_direction = EXCLUDED.next_1_day_direction,
-    next_3_day_direction = EXCLUDED.next_3_day_direction,
-    next_5_day_direction = EXCLUDED.next_5_day_direction,
-    next_7_day_direction = EXCLUDED.next_7_day_direction,
-    next_10_day_direction = EXCLUDED.next_10_day_direction,
-    next_21_day_direction = EXCLUDED.next_21_day_direction,
-    next_30_day_direction = EXCLUDED.next_30_day_direction,
-    next_63_day_direction = EXCLUDED.next_63_day_direction,
-    next_1_day_price_change = EXCLUDED.next_1_day_price_change,
-    next_3_day_price_change = EXCLUDED.next_3_day_price_change,
-    next_5_day_price_change = EXCLUDED.next_5_day_price_change,
-    next_7_day_price_change = EXCLUDED.next_7_day_price_change,
-    next_10_day_price_change = EXCLUDED.next_10_day_price_change,
-    next_21_day_price_change = EXCLUDED.next_21_day_price_change,
-    next_30_day_price_change = EXCLUDED.next_30_day_price_change,
-    next_63_day_price_change = EXCLUDED.next_63_day_price_change,
     updated_at = NOW();

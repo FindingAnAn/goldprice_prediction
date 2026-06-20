@@ -13,13 +13,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.pipelines.eda_data import (
+    add_open_target_changes,
     combine_with_targets,
     load_master_features,
     load_target_labels,
 )
 
 OUTPUT_DIR = PROJECT_ROOT / "data" / "predictions" / "similarity"
-HORIZONS = (5, 7, 10, 21)
+HORIZONS = (1, 3, 5, 7, 10)
 
 
 def _summary(
@@ -89,8 +90,10 @@ def _regime_columns(frame: pd.DataFrame) -> pd.DataFrame:
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     master = load_master_features()
-    targets = load_target_labels(target_col="next_21_day_price_change")
-    frame = combine_with_targets(master, targets).sort_index()
+    targets = load_target_labels(target_col="next_10_day_open")
+    frame = add_open_target_changes(
+        combine_with_targets(master, targets)
+    ).sort_index()
     frame = _regime_columns(_calendar_position(frame))
 
     monthly_outputs: list[pd.DataFrame] = []
@@ -99,7 +102,7 @@ def main() -> None:
     regime_outputs: list[pd.DataFrame] = []
 
     for horizon in HORIZONS:
-        target = f"next_{horizon}_day_price_change"
+        target = f"next_{horizon}_day_open_change_pct"
         monthly = _summary(frame, ["month"], target)
         per_year_month = (
             frame.dropna(subset=[target])

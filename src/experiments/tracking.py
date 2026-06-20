@@ -35,6 +35,10 @@ class RunPaths:
     stages: Path
     feature_list: Path
     holdout_predictions: Path
+    deep_model_metrics: Path
+    deep_model_predictions: Path
+    deep_model_future_predictions: Path
+    deep_model_directory: Path
     model: Path
     holdout_model: Path
 
@@ -63,6 +67,12 @@ def create_run_paths(
         stages=directory / "stage_metrics.csv",
         feature_list=directory / "feature_columns.json",
         holdout_predictions=directory / "holdout_predictions.csv",
+        deep_model_metrics=directory / "deep_model_metrics.csv",
+        deep_model_predictions=directory / "deep_model_predictions.csv",
+        deep_model_future_predictions=(
+            directory / "deep_model_future_predictions.csv"
+        ),
+        deep_model_directory=directory / "deep_models",
         model=directory / "model.joblib",
         holdout_model=directory / "model_holdout.joblib",
     )
@@ -84,9 +94,8 @@ def library_versions() -> dict[str, str]:
         "sqlalchemy",
         "psycopg2-binary",
         "psutil",
-        "xgboost",
-        "lightgbm",
-        "catboost",
+        "neuralforecast",
+        "torch",
     )
     versions = {"python": platform.python_version()}
     for package in packages:
@@ -178,19 +187,22 @@ def fail_run(run_id: str, error: BaseException) -> None:
 
 
 def save_candidates(run_id: str, candidates: pd.DataFrame) -> None:
+    def nullable_number(value: object) -> float | None:
+        return None if pd.isna(value) else float(value)
+
     rows = [
         (
             run_id,
             row.model,
             bool(row.selected),
             Json(row.parameters if isinstance(row.parameters, dict) else {}),
-            row.cv_rmse,
-            row.holdout_rmse,
-            row.holdout_mae,
-            row.holdout_mape,
-            row.holdout_r2,
-            row.rmse_improvement_vs_persistence_pct,
-            row.training_seconds,
+            nullable_number(row.cv_rmse),
+            nullable_number(row.holdout_rmse),
+            nullable_number(row.holdout_mae),
+            nullable_number(row.holdout_mape),
+            nullable_number(row.holdout_r2),
+            nullable_number(row.rmse_improvement_vs_persistence_pct),
+            nullable_number(row.training_seconds),
             row.artifact_path,
         )
         for row in candidates.itertuples(index=False)
@@ -257,28 +269,47 @@ def save_predictions(run_id: str, predictions: pd.DataFrame) -> None:
             int(row.forecast_step),
             row.forecast_date,
             float(row.predicted_open),
+            row.reference_close,
+            row.predicted_change_amount,
+            row.predicted_change_pct,
+            row.forecast_direction,
             row.lower_80,
             row.upper_80,
             row.lower_95,
             row.upper_95,
             bool(row.is_estimated_date),
+            row.top_reason_1,
+            row.top_reason_2,
+            row.top_reason_3,
+            row.explanation_method,
         )
         for row in predictions.itertuples(index=False)
     ]
     sql = """
         INSERT INTO forecasting.open_predictions (
             run_id, as_of_date, forecast_step, forecast_date,
-            predicted_open, lower_80, upper_80, lower_95, upper_95,
-            is_estimated_date
+            predicted_open, reference_close, predicted_change_amount,
+            predicted_change_pct, forecast_direction,
+            lower_80, upper_80, lower_95, upper_95,
+            is_estimated_date, top_reason_1, top_reason_2, top_reason_3,
+            explanation_method
         ) VALUES %s
         ON CONFLICT (run_id, forecast_step) DO UPDATE SET
             forecast_date = EXCLUDED.forecast_date,
             predicted_open = EXCLUDED.predicted_open,
+            reference_close = EXCLUDED.reference_close,
+            predicted_change_amount = EXCLUDED.predicted_change_amount,
+            predicted_change_pct = EXCLUDED.predicted_change_pct,
+            forecast_direction = EXCLUDED.forecast_direction,
             lower_80 = EXCLUDED.lower_80,
             upper_80 = EXCLUDED.upper_80,
             lower_95 = EXCLUDED.lower_95,
             upper_95 = EXCLUDED.upper_95,
-            is_estimated_date = EXCLUDED.is_estimated_date
+            is_estimated_date = EXCLUDED.is_estimated_date,
+            top_reason_1 = EXCLUDED.top_reason_1,
+            top_reason_2 = EXCLUDED.top_reason_2,
+            top_reason_3 = EXCLUDED.top_reason_3,
+            explanation_method = EXCLUDED.explanation_method
     """
     with _connect() as connection:
         with connection.cursor() as cursor:
@@ -324,6 +355,7 @@ def save_resources(run_id: str, resources: dict[str, float | int]) -> None:
         "samples": "count",
         "model_size_bytes": "bytes",
         "holdout_model_size_bytes": "bytes",
+        "deep_model_size_bytes": "bytes",
         "prediction_rows_per_second": "rows_per_second",
     }
     rows = [

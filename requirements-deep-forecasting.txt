@@ -1,3 +1,0 @@
-# Optional sequence/foundation-model benchmarks.
-neuralforecast>=3.1,<4
-tabpfn-time-series>=1.1,<2

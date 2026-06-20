@@ -4,7 +4,7 @@ src/data/ingestion/freegold_ingestion.py
 Fetch gold price history from FreeGoldAPI và upsert vào raw.gold_prices.
 
 FreeGoldAPI cung cấp lịch sử giá vàng daily (từ Yahoo Finance GC=F).
-Dữ liệu được filter từ 2000-01-01 trở đi và upsert vào PostgreSQL.
+Dữ liệu được filter từ DATA_START_DATE trở đi và upsert vào PostgreSQL.
 
 Functions:
     fetch_freegoldapi      : Download FreeGoldAPI CSV và upsert vào PG.

@@ -14,7 +14,7 @@ WITH base AS (
         gold_close - LAG(gold_close, 1) OVER (ORDER BY date) AS daily_change
     FROM staging.daily_master
     WHERE gold_close IS NOT NULL
-      AND date >= '2000-01-01'
+      AND date >= '2010-01-01'
 ),
 
 -- ── RSI-14 ─────────────────────────────────────────────────────────────────

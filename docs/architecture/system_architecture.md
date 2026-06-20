@@ -1,250 +1,57 @@
-# Python Code Style Guide VINAI HIEPLD (PEP8-based)
+# System Architecture
 
-## 1. General Principles
+## Phạm vi
 
--   Code should be readable and consistent.
--   Follow **PEP8** for naming and formatting.
--   A project should use **one consistent style**.
+Hệ thống là batch forecasting pipeline cho dữ liệu daily. PostgreSQL xử lý
+storage/feature engineering; Python điều phối API, training và observability.
 
-------------------------------------------------------------------------
-
-# 2. Naming Conventions
-
-## 2.1 Class
-
-Classes use **PascalCase**.
-
-``` python
-class UserAccount:
-    pass
-
-class DataProcessor:
-    pass
+```mermaid
+flowchart LR
+    A["Yahoo / FreeGold / FRED / CFTC / EIA"] --> B["raw schema"]
+    B --> C["staging.daily_master"]
+    C --> D["SQL feature tables"]
+    D --> E["features.master_features"]
+    C --> F["features.target_labels"]
+    E --> G["Persistence baseline"]
+    E --> H["TiDE / PatchTST / N-HiTS"]
+    F --> G
+    F --> H
+    G --> I["Rolling evaluation + selection"]
+    H --> I
+    I --> J["10-session Open forecast"]
+    J --> K["Filesystem artifacts"]
+    J --> L["forecasting schema"]
 ```
 
-------------------------------------------------------------------------
-
-## 2.2 Variables
-
-Variables use **snake_case**.
-
-``` python
-user_name = "Minh"
-user_age = 20
-total_price = 100
-```
-
-Avoid:
-
-``` python
-userName
-UserName
-USERNAME
-```
-
-------------------------------------------------------------------------
-
-## 2.3 Functions / Methods
-
-Functions use **snake_case**.
-
-``` python
-def get_user_name():
-    pass
-
-def calculate_total_price():
-    pass
-```
-
-------------------------------------------------------------------------
-
-## 2.4 Constants
-
-Constants use **UPPER_CASE**.
-
-``` python
-MAX_CONNECTION = 100
-DEFAULT_TIMEOUT = 30
-API_URL = "https://api.example.com"
-```
-
-------------------------------------------------------------------------
-
-## 2.5 Private Variables / Methods
-
-Use a **single underscore**.
-
-``` python
-class UserService:
-
-    def __init__(self):
-        self._token = None
-
-    def _generate_token(self):
-        pass
-```
-
-------------------------------------------------------------------------
-
-## 2.6 Special Methods
-
-Use **double underscore** for Python special methods.
-
-``` python
-class User:
-
-    def __init__(self, name):
-        self.name = name
-
-    def __str__(self):
-        return self.name
-```
-
-------------------------------------------------------------------------
-
-# 3. File Naming
-
-Files should use **snake_case**.
-
-    user_service.py
-    data_processor.py
-    config_loader.py
-
-Avoid:
-
-    UserService.py
-    dataProcessor.py
-
-------------------------------------------------------------------------
-
-# 4. Class Structure (Recommended Order)
-
-``` python
-class UserService:
-    MAX_LOGIN = 5
-
-    def __init__(self, name):
-        self.name = name
-        self._token = None
-
-    def login(self):
-        pass
-
-    def logout(self):
-        pass
-
-    def _generate_token(self):
-        pass
-```
-
-Order: 1. Constants 2. `__init__` 3. Public methods 4. Private methods
-
-------------------------------------------------------------------------
-
-# 5. Spacing
-
-### Around operators
-
-Correct:
-
-``` python
-total = price + tax
-```
-
-Incorrect:
-
-``` python
-total=price+tax
-```
-
-### After comma
-
-Correct:
-
-``` python
-print(name, age)
-```
-
-Incorrect:
-
-``` python
-print(name,age)
-```
-
-------------------------------------------------------------------------
-
-# 6. Line Length
-
-PEP8 recommendation:
-
-    <= 79 characters
-
-If longer:
-
-``` python
-result = calculate_total_price(
-    product_price,
-    tax_rate,
-    discount
-)
-```
-
-------------------------------------------------------------------------
-
-# 7. Import Order
-
-Import order:
-
-1.  Standard library
-2.  Third‑party packages
-3.  Local modules
-
-``` python
-import os
-import sys
-
-import requests
-
-from app.services import user_service
-```
-
-------------------------------------------------------------------------
-
-# 8. Example Code
-
-``` python
-MAX_RETRY = 3
-
-
-class UserAccount:
-
-    def __init__(self, username: str):
-        self.username = username
-        self._login_attempt = 0
-
-    def login(self):
-        if self._login_attempt > MAX_RETRY:
-            return False
-
-        self._login_attempt += 1
-        return True
-
-    def reset_login(self):
-        self._login_attempt = 0
-```
-
-------------------------------------------------------------------------
-
-# 9. Recommended Tools
-
-Tools to automatically enforce style:
-
-    black
-    flake8
-    pylint
-    isort
-
-Example:
-
-    black .
-    flake8 .
+## Thành phần
+
+| Layer | Trách nhiệm |
+|---|---|
+| `config/` | Cấu hình tập trung, paths, tickers, model constants |
+| `src/data/ingestion/` | API clients, normalization, raw upsert |
+| `src/data/storage/` | PostgreSQL connection, schema/SQL runners |
+| `sql/schema/` | DDL raw, staging, features, forecasting |
+| `sql/features/` | Feature và target generation |
+| `src/pipelines/` | Orchestration, validation, EDA, environment checks |
+| `src/modeling/` | Leakage guards, baseline, sequence models, explanations |
+| `src/experiments/` | Run ID, file/DB persistence, metadata |
+| `scripts/` | CLI entrypoints |
+
+## Quyết định kiến trúc
+
+- Không dùng Spark: dữ liệu daily từ 2010 chỉ vài nghìn dòng.
+- Không dùng Polars trong production path: bottleneck là network, SQL và deep
+  training; đổi DataFrame engine không tạo lợi ích đáng kể ở quy mô này.
+- Không import logic production từ `scripts/`; scripts chỉ là thin CLI.
+- Không giữ song song stack tabular target cũ; một forecast contract duy nhất
+  giảm drift giữa code, SQL và tài liệu.
+- Feature SQL có thứ tự cố định để reproducible.
+- Forecasting history tách schema và không bị full refresh xóa.
+
+## Boundary
+
+- Cutoff: sau phiên hiện tại.
+- Prediction unit: một trading session.
+- Target: vector 10 Open.
+- Forecast date: business-day estimate, không phải CME calendar chính thức.
+- Deployment hiện tại: batch/local; chưa có scheduler hay serving API.

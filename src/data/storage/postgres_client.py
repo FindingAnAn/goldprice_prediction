@@ -23,6 +23,7 @@ from typing import Sequence
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
+from psycopg2 import sql
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -53,6 +54,7 @@ FEATURE_SQL_ORDER = (
     "07_sliding_window.sql",
     "09_ewma_features.sql",
     "10_seasonality_features.sql",
+    "11_market_driver_features.sql",
     "08_master_features.sql",
 )
 
@@ -202,6 +204,65 @@ def ensure_schemas() -> None:
             for schema in schemas:
                 cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
                 logger.info("Schema ensured", extra={"schema": schema})
+
+
+def truncate_pipeline_data() -> dict[str, int]:
+    """Truncate raw, staging and feature data while preserving run history.
+
+    The forecasting schema is deliberately excluded so experiment metrics,
+    predictions and logs remain auditable across full data refreshes.
+    """
+
+    refresh_schemas = (
+        PG_SCHEMA_FEATURES,
+        PG_SCHEMA_STAGING,
+        PG_SCHEMA_RAW,
+    )
+    conn_params = get_connection_params()
+    with psycopg2.connect(**conn_params) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT table_schema, table_name
+                FROM information_schema.tables
+                WHERE table_type = 'BASE TABLE'
+                  AND table_schema = ANY(%s)
+                ORDER BY
+                    CASE table_schema
+                        WHEN 'features' THEN 1
+                        WHEN 'staging' THEN 2
+                        WHEN 'raw' THEN 3
+                    END,
+                    table_name
+                """,
+                (list(refresh_schemas),),
+            )
+            tables = cursor.fetchall()
+            if tables:
+                identifiers = [
+                    sql.Identifier(schema_name, table_name)
+                    for schema_name, table_name in tables
+                ]
+                cursor.execute(
+                    sql.SQL("TRUNCATE TABLE {} RESTART IDENTITY CASCADE").format(
+                        sql.SQL(", ").join(identifiers)
+                    )
+                )
+        conn.commit()
+
+    counts = {
+        schema_name: sum(1 for schema, _ in tables if schema == schema_name)
+        for schema_name in refresh_schemas
+    }
+    logger.info(
+        "Pipeline data truncated",
+        extra={
+            "schemas": list(refresh_schemas),
+            "table_counts": counts,
+            "forecasting_preserved": True,
+        },
+    )
+    return counts
 
 
 def execute_sql_file(path: str | Path) -> None:
@@ -457,9 +518,36 @@ def get_row_count(schema: str, table: str) -> int:
     Returns:
         Số dòng (int), hoặc -1 nếu bảng không tồn tại.
     """
-    if not table_exists(schema, table):
-        return -1
     engine = get_engine()
     with engine.connect() as conn:
+        exists = conn.execute(
+            text("SELECT to_regclass(:qualified_name) IS NOT NULL"),
+            {"qualified_name": f"{schema}.{table}"},
+        ).scalar()
+        if not exists:
+            return -1
         result = conn.execute(text(f'SELECT COUNT(*) FROM "{schema}"."{table}"'))
         return int(result.scalar())  # type: ignore
+
+
+def get_row_counts(schema: str, tables: Sequence[str]) -> dict[str, int]:
+    """Return counts for multiple trusted table names over one connection."""
+
+    engine = get_engine()
+    counts: dict[str, int] = {}
+    with engine.connect() as connection:
+        for table in tables:
+            exists = connection.execute(
+                text("SELECT to_regclass(:qualified_name) IS NOT NULL"),
+                {"qualified_name": f"{schema}.{table}"},
+            ).scalar()
+            counts[table] = (
+                int(
+                    connection.execute(
+                        text(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
+                    ).scalar()
+                )
+                if exists
+                else -1
+            )
+    return counts

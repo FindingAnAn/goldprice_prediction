@@ -1,43 +1,59 @@
 # Modeling Workflow
 
-Use `scripts/run_modeling.py` as the single CLI for the modeling stage.
+## Forecast contract
 
-## Commands
+Input tại ngày `t` dùng thông tin đã biết sau khi phiên `t` đóng cửa. Output là
+Open của 10 phiên kế tiếp.
 
-Train and tune candidate models:
+## Candidate set
 
-```bash
-python scripts/run_modeling.py train --use-optuna --tuning-trials 20
-```
+| Model | Input | Vai trò |
+|---|---|---|
+| Persistence Close | Current close | Baseline bắt buộc |
+| TiDE | Open + historical exogenous | Dense multivariate sequence |
+| PatchTST | Open sequence | Patch-based univariate transformer |
+| N-HiTS | Open + historical exogenous | Multi-resolution challenger |
 
-The default target is `next_7_day_price`: one direct forecast for the price
-after seven trading observations.
+Tabular regressors, AutoGluon và TabPFN-TS không còn trong benchmark hiện tại.
+Chúng không cùng sequence/multi-horizon contract và tạo hai pipeline khó kiểm
+soát.
 
-Benchmark AutoGluon without exposing the final holdout during tuning:
+## Sequence preparation
 
-```bash
-pip install -r requirements-autogluon.txt
-python scripts/run_modeling.py autogluon --time-limit 600
-```
+- Sắp xếp tăng dần theo date.
+- Target: `log(gold_open)`.
+- Thay infinity bằng null.
+- Chỉ giữ exogenous có coverage >= 80%.
+- Chỉ forward-fill; không backward-fill.
+- Input window 252 phiên, validation tail 63 phiên.
 
-Evaluate the persisted model on a chronological holdout split:
+PatchTST implementation hiện dùng univariate input. TiDE và N-HiTS dùng
+historical exogenous.
 
-```bash
-python scripts/run_modeling.py evaluate --model-path models/best_model.joblib
-```
+## Evaluation
 
-Generate the latest prediction and persist it to `data/predictions/`:
+Rolling windows dự báo 10 bước. Metric được lưu riêng tại horizon 1, 3, 5, 7,
+10:
 
-```bash
-python scripts/run_modeling.py predict --latest-n 1
-```
+- RMSE;
+- MAE;
+- MAPE;
+- direction accuracy so với current price;
+- persistence RMSE;
+- RMSE improvement so với persistence.
 
-## Notes
+Candidate tốt nhất là candidate có mean rolling RMSE thấp nhất. Không mặc định
+deep model tốt hơn baseline.
 
-- `src/modeling/train.py` is the canonical training implementation.
-- `src/modeling/predict.py` exposes a frame-based API for tests and batch inference.
-- AutoGluon is accepted only if its final chronological holdout metrics beat
-  the canonical pipeline under the same target and split policy.
-- Every future target column is excluded from model inputs.
-- Seven observations are purged between train/test and CV folds.
-- Legacy duplicate ingestion entrypoints were removed in favor of the canonical pipeline.
+## Production fit và interval
+
+Sau selection, mỗi deep model được fit lại trên full eligible sequence và lưu
+artifact. Forecast model được chọn tạo 10 giá trị. Khoảng 80%/95% dùng empirical
+absolute residual quantile theo từng forecast step; đây không phải calibrated
+probabilistic interval.
+
+## Explanation
+
+Direction được tính từ predicted Open so với current Close với flat threshold
+0.05%. Top reasons xếp hạng rule-based evidence từ DXY, real yield, VIX, EPU,
+credit, CFTC và GLD. Chúng không giải thích nội tại của neural network.

@@ -1,11 +1,7 @@
 """
 src/pipelines/environment_check.py
 ==================================
-Environment check pipeline for the Gold Time Prediction project.
-
-This module extracts the notebook logic from notebooks/01_env_check.ipynb
-into reusable functions so the same checks can be executed from a script,
-notebook, or test.
+Environment and database readiness checks.
 """
 
 from __future__ import annotations
@@ -17,8 +13,9 @@ from typing import Sequence
 import pandas as pd
 from sqlalchemy import text
 
-from src.data.storage.postgres_client import get_engine, get_row_count, table_exists
+from src.data.storage.postgres_client import get_engine
 from src.utils.config_loader import (
+    CFTC_PATH,
     DATA_END_DATE,
     DATA_START_DATE,
     EIA_KEY_VALID,
@@ -27,9 +24,11 @@ from src.utils.config_loader import (
     FRED_PATH,
     FREEGOLD_PATH,
     PG_SCHEMA_FEATURES,
+    PG_SCHEMA_FORECASTING,
     PG_SCHEMA_RAW,
     PG_SCHEMA_STAGING,
     SQL_DIR,
+    PREDICTIONS_DIR,
     YFINANCE_PATH,
 )
 from src.utils.logging_config import get_logger
@@ -42,6 +41,8 @@ DEFAULT_REQUIRED_DIRECTORIES: tuple[Path, ...] = (
     YFINANCE_PATH,
     FRED_PATH,
     EIA_PATH,
+    CFTC_PATH,
+    PREDICTIONS_DIR,
 )
 
 DEFAULT_TABLES_TO_CHECK: tuple[tuple[str, str], ...] = (
@@ -50,6 +51,7 @@ DEFAULT_TABLES_TO_CHECK: tuple[tuple[str, str], ...] = (
     (PG_SCHEMA_RAW, "fred_daily"),
     (PG_SCHEMA_RAW, "fred_monthly"),
     (PG_SCHEMA_RAW, "eia_oil"),
+    (PG_SCHEMA_RAW, "cftc_gold_positioning"),
     (PG_SCHEMA_STAGING, "daily_master"),
     (PG_SCHEMA_FEATURES, "price_indicators"),
     (PG_SCHEMA_FEATURES, "momentum_indicators"),
@@ -58,7 +60,16 @@ DEFAULT_TABLES_TO_CHECK: tuple[tuple[str, str], ...] = (
     (PG_SCHEMA_FEATURES, "ratio_features"),
     (PG_SCHEMA_FEATURES, "sliding_windows"),
     (PG_SCHEMA_FEATURES, "target_labels"),
+    (PG_SCHEMA_FEATURES, "ewma_features"),
+    (PG_SCHEMA_FEATURES, "seasonality_features"),
+    (PG_SCHEMA_FEATURES, "market_driver_features"),
     (PG_SCHEMA_FEATURES, "master_features"),
+    (PG_SCHEMA_FORECASTING, "model_runs"),
+    (PG_SCHEMA_FORECASTING, "model_candidates"),
+    (PG_SCHEMA_FORECASTING, "model_metrics"),
+    (PG_SCHEMA_FORECASTING, "open_predictions"),
+    (PG_SCHEMA_FORECASTING, "stage_metrics"),
+    (PG_SCHEMA_FORECASTING, "resource_metrics"),
 )
 
 
@@ -102,20 +113,48 @@ def check_postgres_connection() -> PostgresConnectionCheck:
 def build_database_status_frame(
     tables_to_check: Sequence[tuple[str, str]] = DEFAULT_TABLES_TO_CHECK,
 ) -> pd.DataFrame:
-    """Build the status table shown in the notebook."""
+    """Build table existence and row-count diagnostics."""
     rows: list[dict[str, object]] = []
 
-    for schema, table in tables_to_check:
-        exists = table_exists(schema, table)
-        row_count = get_row_count(schema, table) if exists else 0
-        status = "OK" if exists and row_count > 0 else ("EMPTY" if exists else "NOT FOUND")
-        rows.append(
-            {
-                "schema.table": f"{schema}.{table}",
-                "rows": row_count,
-                "status": status,
-            }
-        )
+    engine = get_engine()
+    with engine.connect() as connection:
+        for schema, table in tables_to_check:
+            exists = bool(
+                connection.execute(
+                    text(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM information_schema.tables
+                            WHERE table_schema = :schema
+                              AND table_name = :table
+                        )
+                        """
+                    ),
+                    {"schema": schema, "table": table},
+                ).scalar()
+            )
+            row_count = (
+                int(
+                    connection.execute(
+                        text(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
+                    ).scalar()
+                )
+                if exists
+                else 0
+            )
+            status = (
+                "OK"
+                if exists and row_count > 0
+                else ("EMPTY" if exists else "NOT FOUND")
+            )
+            rows.append(
+                {
+                    "schema.table": f"{schema}.{table}",
+                    "rows": row_count,
+                    "status": status,
+                }
+            )
 
     return pd.DataFrame(rows)
 
@@ -141,7 +180,10 @@ def render_environment_check_report(report: EnvironmentCheckReport) -> None:
     print(
         f"[INFO] EIA API key    : {'VALID' if report.eia_key_valid else 'MISSING - will use yfinance fallback'}"
     )
-    print(f"[INFO] PG Schemas     : {PG_SCHEMA_RAW}, {PG_SCHEMA_STAGING}, {PG_SCHEMA_FEATURES}")
+    print(
+        f"[INFO] PG Schemas     : {PG_SCHEMA_RAW}, {PG_SCHEMA_STAGING}, "
+        f"{PG_SCHEMA_FEATURES}, {PG_SCHEMA_FORECASTING}"
+    )
     print(f"[INFO] SQL Dir        : {SQL_DIR}")
 
     if report.postgres.connected:
