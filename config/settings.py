@@ -19,6 +19,7 @@ PROCESSED_DIR     = DATA_DIR / "processed"
 FEATURES_DIR      = DATA_DIR / "features"
 SQL_DIR           = PROJECT_ROOT / "sql"
 LOGS_DIR          = PROJECT_ROOT / "logs"
+PREDICTIONS_DIR   = DATA_DIR / "predictions"
 
 # Raw incoming — theo nguồn (giữ lại để backward-compat nếu cần)
 FREEGOLD_PATH     = RAW_INCOMING_DIR / "freegoldapi"
@@ -37,12 +38,31 @@ DATA_END_DATE   = None           # None = đến ngày hôm nay
 # không phải 7 ngày lịch và cũng không phải vector gồm 7 giá trị.
 FORECAST_HORIZON_DAYS = 7
 TARGET_COLUMN = f"next_{FORECAST_HORIZON_DAYS}_day_price"
-SUPPORTED_FORECAST_HORIZONS = (1, 3, 7, 30)
+OPEN_FORECAST_HORIZON = 10
+OPEN_FORECAST_RANDOM_SEED = 42
+OPEN_FORECAST_TEST_SIZE = 0.2
+OPEN_FORECAST_CV_SPLITS = 3
+OPEN_FORECAST_MODEL_CONFIG = {
+    "ridge_alpha": 1.0,
+    "extra_trees_estimators": 300,
+    "extra_trees_min_samples_leaf": 3,
+    "extra_trees_max_features": 0.7,
+    "random_forest_estimators": 250,
+    "random_forest_min_samples_leaf": 3,
+    "random_forest_max_features": 0.7,
+}
+OPEN_TARGET_COLUMNS = tuple(
+    f"next_{horizon}_day_open"
+    for horizon in range(1, OPEN_FORECAST_HORIZON + 1)
+)
+# Trading-session horizons used for comparison:
+# 5≈one week, 10≈two weeks, 21≈one month, 63≈one quarter.
+SUPPORTED_FORECAST_HORIZONS = (1, 3, 5, 7, 10, 21, 30, 63)
 TARGET_LABEL_COLUMNS = tuple(
     f"next_{horizon}_day_{target_kind}"
     for horizon in SUPPORTED_FORECAST_HORIZONS
     for target_kind in ("price", "direction", "price_change")
-)
+) + OPEN_TARGET_COLUMNS
 
 # FRED monthly observations are currently stored by observation month, not by
 # their historical release timestamp/vintage. Using them in backtests would
@@ -63,6 +83,7 @@ POINT_IN_TIME_UNSAFE_FEATURE_COLUMNS = (
 PG_SCHEMA_RAW      = "raw"
 PG_SCHEMA_STAGING  = "staging"
 PG_SCHEMA_FEATURES = "features"
+PG_SCHEMA_FORECASTING = "forecasting"
 
 # ─────────────────────────────────────────────
 # 4. FREEGOLDAPI (không cần key)

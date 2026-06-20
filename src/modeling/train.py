@@ -39,7 +39,7 @@ MODELS_DIR = Path("models")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_REPORT_DIR = Path("data/predictions")
 TARGET_COLUMN_PATTERN = re.compile(
-    r"^next_(?P<horizon>\d+)_day_(?:price|direction|price_change)$"
+    r"^next_(?P<horizon>\d+)_day_(?:price|open|direction|price_change)$"
 )
 
 
@@ -85,6 +85,31 @@ class ReturnTargetRegressor(BaseEstimator, RegressorMixin):
         current_price = np.asarray(X[:, self.current_price_index], dtype=float)
         predicted_return = np.asarray(self.estimator_.predict(X), dtype=float)
         return current_price * (1.0 + predicted_return / 100.0)
+
+
+class AnalogReturnRegressor(BaseEstimator, RegressorMixin):
+    """Reconstruct price from a precomputed historical-analog return."""
+
+    def __init__(self, current_price_index: int, analog_return_index: int):
+        self.current_price_index = current_price_index
+        self.analog_return_index = analog_return_index
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "AnalogReturnRegressor":
+        analog = np.asarray(X[:, self.analog_return_index], dtype=float)
+        self.fallback_return_ = float(np.nanmedian(analog))
+        if not np.isfinite(self.fallback_return_):
+            self.fallback_return_ = 0.0
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        current_price = np.asarray(X[:, self.current_price_index], dtype=float)
+        analog_return = np.asarray(X[:, self.analog_return_index], dtype=float)
+        analog_return = np.where(
+            np.isfinite(analog_return),
+            analog_return,
+            self.fallback_return_,
+        )
+        return current_price * (1.0 + analog_return / 100.0)
 
 
 def time_series_train_test_split(
@@ -573,6 +598,15 @@ def train_and_select_best(
                 for name, model in candidates.items()
             }
             candidates = {**direct_linear, **return_models}
+        analog_column = f"same_doy_return_{forecast_horizon}d_mean"
+        if analog_column in feature_cols and target_col.endswith("_price"):
+            candidates = {
+                "same_doy_analog": AnalogReturnRegressor(
+                    current_price_index=current_price_index,
+                    analog_return_index=feature_cols.index(analog_column),
+                ),
+                **candidates,
+            }
         candidates = {
             "persistence": FeatureColumnRegressor(
                 feature_index=current_price_index
@@ -746,6 +780,7 @@ __all__ = [
     "TrainResult",
     "FeatureColumnRegressor",
     "ReturnTargetRegressor",
+    "AnalogReturnRegressor",
     "build_training_frame",
     "infer_feature_columns",
     "infer_forecast_horizon",

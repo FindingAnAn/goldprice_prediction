@@ -93,8 +93,10 @@ data/**/*.pickle
 data/**/*.joblib
 data/**/*.xlsx
 data/**/*.json
+data/**/*.jsonl
 # Allow .gitkeep so empty folder structure is preserved in git
 !data/**/.gitkeep
+models/open_forecast/*.joblib
 
 # IPython
 profile_default/

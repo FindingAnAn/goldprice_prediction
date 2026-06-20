@@ -5,6 +5,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 
 from src.modeling.train import (
+    AnalogReturnRegressor,
     ReturnTargetRegressor,
     build_training_frame,
     evaluate_holdout_model,
@@ -173,3 +174,16 @@ def test_return_target_regressor_reconstructs_future_price():
     ).fit(X, y)
 
     np.testing.assert_allclose(model.predict(X), y)
+
+
+def test_analog_return_regressor_uses_return_feature_and_fallback():
+    X = np.array([[100.0, 5.0], [200.0, np.nan], [300.0, -2.0]])
+    model = AnalogReturnRegressor(
+        current_price_index=0,
+        analog_return_index=1,
+    ).fit(X, np.array([0.0, 0.0, 0.0]))
+
+    np.testing.assert_allclose(
+        model.predict(X),
+        np.array([105.0, 203.0, 294.0]),
+    )

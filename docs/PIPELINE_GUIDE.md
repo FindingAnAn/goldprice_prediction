@@ -182,7 +182,7 @@ Pipeline SQL theo thứ tự:
 | 3 | `03_trend_features.sql` | `features.trend_indicators` | ADX-14, Z-score 20d/60d |
 | 4 | `04_macro_features.sql` | `features.macro_features` | DXY, Fed Funds, Yields, CPI, M2, VIX |
 | 5 | `05_ratio_features.sql` | `features.ratio_features` | Gold/Silver, Gold/Oil, Real Yield |
-| 6 | `06_target_labels.sql` | `features.target_labels` | next 1/3/7/30-day price, direction, %change |
+| 6 | `06_target_labels.sql` | `features.target_labels` | next 1/3/5/7/10/21/30/63-session price, direction, %change |
 | 7 | `07_sliding_window.sql` | `features.sliding_windows` | Rolling 5d/21d/63d/252d avg/max/min/std |
 | 8 | `09_ewma_features.sql` | `features.ewma_features` | EWMA 7d/30d/90d/365d + crossover signals |
 | 9 | `08_master_features.sql` | `features.master_features` | JOIN features + OHLCV phiên hiện tại, không có future targets |
@@ -268,6 +268,36 @@ python scripts/run_modeling.py autogluon --time-limit 600
 AutoGluon dùng chronological train/validation/test. Chỉ kết luận tối ưu hơn
 khi RMSE/MAE trên final holdout thấp hơn pipeline chuẩn; không so sánh bằng
 training score.
+
+### Seasonality, horizon và deep forecasting
+
+```bash
+python scripts/analyze_similarity.py
+python scripts/benchmark_horizons.py
+pip install -r requirements-deep-forecasting.txt
+python scripts/benchmark_deep_models.py --models neuralforecast
+```
+
+Chi tiết phương pháp và kết quả:
+`docs/architecture/seasonality_horizon_benchmark.md`.
+
+### Dự báo giá open cho 10 phiên tiếp theo
+
+```bash
+python scripts/run_open_forecast.py
+```
+
+Mỗi lần chạy tạo một `run_id`, lưu toàn bộ log và artifacts tại
+`data/predictions/open_10d/<run_id>/`, đồng thời ghi kết quả vào schema
+PostgreSQL `forecasting`.
+
+Khi dữ liệu thực tế của các phiên tương lai đã được ingest:
+
+```bash
+python scripts/reconcile_open_forecasts.py
+```
+
+Chi tiết: `docs/architecture/open_forecast_observability.md`.
 
 **Benchmark gần nhất (chronological split, purge gap 7 phiên):**
 

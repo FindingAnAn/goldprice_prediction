@@ -39,6 +39,7 @@ DEFAULT_FEATURE_TABLES: tuple[str, ...] = (
     "sliding_windows",
     "target_labels",
     "ewma_features",
+    "seasonality_features",
     "master_features",
 )
 

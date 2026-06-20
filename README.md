@@ -2,6 +2,13 @@
 
 <<<<<<< HEAD
 Dự báo trực tiếp giá đóng cửa vàng sau **7 phiên giao dịch** (`t+7`).
+
+Pipeline cũng hỗ trợ dự báo vector giá **open của 10 phiên giao dịch tiếp
+theo**, kèm experiment tracking, structured logging và PostgreSQL registry:
+
+```bash
+python scripts/run_open_forecast.py
+```
 Target mặc định là `next_7_day_price`; đây là một giá trị tại phiên thứ 7,
 không phải chuỗi 7 giá trị liên tiếp.
 

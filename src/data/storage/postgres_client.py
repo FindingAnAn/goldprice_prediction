@@ -27,7 +27,13 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from config.settings import DatabaseConfig
-from src.utils.config_loader import SQL_DIR, PG_SCHEMA_RAW, PG_SCHEMA_STAGING, PG_SCHEMA_FEATURES
+from src.utils.config_loader import (
+    SQL_DIR,
+    PG_SCHEMA_RAW,
+    PG_SCHEMA_STAGING,
+    PG_SCHEMA_FEATURES,
+    PG_SCHEMA_FORECASTING,
+)
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -35,6 +41,7 @@ SCHEMA_SQL_ORDER = (
     "01_raw_tables.sql",
     "02_staging_tables.sql",
     "03_feature_tables.sql",
+    "04_forecasting_tables.sql",
 )
 FEATURE_SQL_ORDER = (
     "01_price_features.sql",
@@ -45,6 +52,7 @@ FEATURE_SQL_ORDER = (
     "06_target_labels.sql",
     "07_sliding_window.sql",
     "09_ewma_features.sql",
+    "10_seasonality_features.sql",
     "08_master_features.sql",
 )
 
@@ -181,7 +189,12 @@ def ensure_schemas() -> None:
     Dùng autocommit=True vì CREATE SCHEMA không thể chạy trong transaction block
     trên một số cấu hình PostgreSQL.
     """
-    schemas = [PG_SCHEMA_RAW, PG_SCHEMA_STAGING, PG_SCHEMA_FEATURES]
+    schemas = [
+        PG_SCHEMA_RAW,
+        PG_SCHEMA_STAGING,
+        PG_SCHEMA_FEATURES,
+        PG_SCHEMA_FORECASTING,
+    ]
     conn_params = get_connection_params()
     with psycopg2.connect(**conn_params) as conn:
         conn.autocommit = True

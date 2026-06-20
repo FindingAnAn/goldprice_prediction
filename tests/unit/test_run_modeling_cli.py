@@ -28,6 +28,12 @@ def test_build_parser_accepts_all_subcommands():
     assert parser.parse_args(["predict"]).command == "predict"
     assert parser.parse_args(["autogluon"]).command == "autogluon"
     assert parser.parse_args(["train"]).target_col == "next_7_day_price"
+    assert (
+        parser.parse_args(
+            ["train", "--target-col", "next_21_day_price"]
+        ).target_col
+        == "next_21_day_price"
+    )
 
 
 def test_main_train_smoke_uses_log_file_and_prints(
