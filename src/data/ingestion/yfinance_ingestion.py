@@ -102,11 +102,11 @@ def fetch_yfinance_ohlcv(
             progress=False,
         )
     except Exception:
-        logger.exception("yfinance download lỗi", extra={"ticker": ticker})
+        logger.exception("yfinance download failed", extra={"ticker": ticker})
         return pd.DataFrame()
 
     if raw.empty:
-        logger.warning("yfinance trả về rỗng", extra={"ticker": ticker})
+        logger.warning("yfinance returned no rows", extra={"ticker": ticker})
         return pd.DataFrame()
 
     # Flatten MultiIndex columns nếu có (xảy ra với single ticker đôi khi)
@@ -177,12 +177,15 @@ def ingest_yfinance_all(
             results[ticker] = n
 
         except Exception:
-            logger.exception("Lỗi ingest yfinance ticker", extra={"ticker": ticker})
+            logger.exception(
+                "yfinance ticker ingestion failed",
+                extra={"ticker": ticker},
+            )
             results[ticker] = -1
 
     success = sum(v for v in results.values() if v > 0)
     logger.info(
-        "ingest_yfinance_all hoàn tất",
+        "yfinance ingestion completed",
         extra={"total_upserted": success, "tickers_count": len(tickers)},
     )
     return results

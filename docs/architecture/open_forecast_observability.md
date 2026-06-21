@@ -46,7 +46,6 @@ git-ignore; source code không phụ thuộc vào artifact cũ trong repository.
 
 Trước khi complete:
 
-- reload Joblib baseline và so prediction bằng tolerance chặt;
 - reload từng NeuralForecast artifact;
 - so future prediction với giá trị trước khi lưu.
 

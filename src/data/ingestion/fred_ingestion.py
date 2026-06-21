@@ -90,7 +90,10 @@ def ingest_fred_daily(
                 conflict_cols=["date", "series_id"],
             )
         except Exception:
-            logger.exception("Lỗi FRED daily", extra={"series_id": series_id})
+            logger.exception(
+                "FRED daily ingestion failed",
+                extra={"series_id": series_id},
+            )
             results[series_id] = -1
 
     logger.info(
@@ -121,7 +124,10 @@ def ingest_fred_monthly(
                 conflict_cols=["date", "series_id"],
             )
         except Exception:
-            logger.exception("Lỗi FRED monthly", extra={"series_id": series_id})
+            logger.exception(
+                "FRED monthly ingestion failed",
+                extra={"series_id": series_id},
+            )
             results[series_id] = -1
 
     logger.info(

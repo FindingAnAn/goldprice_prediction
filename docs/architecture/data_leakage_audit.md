@@ -13,7 +13,7 @@ của FRED; vì vậy kết quả là research-grade, chưa phải trading-grade
 |---|---|---|
 | Future target trong feature | Target ở bảng riêng; prefix `next_<n>_day_` bị chặn | Đã kiểm soát |
 | Random split | Chronological split và rolling windows | Đã kiểm soát |
-| Overlap train/test target | Purge gap 10 phiên | Đã kiểm soát |
+| Future observations trong train | Mỗi rolling cutoff chỉ train trên quá khứ | Đã kiểm soát |
 | CFTC Tuesday report dùng trước Friday | Join từ `available_date = report_date + 3` | Đã kiểm soát |
 | Seasonal analog dùng tương lai gần | Chỉ dùng historical row ít nhất 1 năm trước | Đã kiểm soát |
 | Monthly macro revision | Cấm các cột monthly trong model | Đã kiểm soát |
@@ -22,8 +22,9 @@ của FRED; vì vậy kết quả là research-grade, chưa phải trading-grade
 
 ## Target isolation
 
-`features.master_features` không join `features.target_labels`. Training frame
-chỉ join hai bảng ngay trước modeling. `infer_feature_columns()` loại:
+`features.master_features` không join `features.target_labels`. Sequence model
+dùng chuỗi `gold_open`; direct model tạo target theo từng horizon trong memory.
+Bảng target label chỉ phục vụ EDA/kiểm tra. Các utility EDA loại:
 
 - toàn bộ `OPEN_TARGET_COLUMNS`;
 - mọi cột khớp `^next_\d+_day_`;
@@ -31,8 +32,10 @@ chỉ join hai bảng ngay trước modeling. `infer_feature_columns()` loại:
 
 ## Validation protocol
 
-- Baseline holdout: chronological, purge gap 10.
 - Deep models: rolling cross-validation, step size 10, không shuffle.
+- Direct model horizon `h`: train kết thúc tại `cutoff - h`; target là
+  `log(open[t+h]/close[t])`.
+- Direct models dùng rolling training window 1.260 phiên; không backward-fill.
 - Model selection: rolling RMSE; final future data không tham gia selection.
 - Production refit chỉ chạy sau evaluation.
 

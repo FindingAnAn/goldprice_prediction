@@ -93,7 +93,7 @@ def _build_model(
     historical_exogenous: tuple[str, ...],
     max_steps: int,
 ) -> object:
-    from neuralforecast.models import NHITS, PatchTST, TiDE
+    from neuralforecast.models import DLinear, NHITS, NLinear, PatchTST, TiDE
 
     common = {
         "h": max(DEEP_FORECAST_HORIZONS),
@@ -141,6 +141,19 @@ def _build_model(
             learning_rate=5e-4,
             alias=model_name,
         )
+    if model_name == "DLinear":
+        return DLinear(
+            **common,
+            moving_avg_window=25,
+            learning_rate=1e-3,
+            alias=model_name,
+        )
+    if model_name == "NLinear":
+        return NLinear(
+            **common,
+            learning_rate=1e-3,
+            alias=model_name,
+        )
     raise ValueError(f"Unsupported sequence model: {model_name}")
 
 
@@ -154,10 +167,8 @@ def _metric_rows(
         actual = subset["actual_price"].to_numpy()
         current = subset["current_price"].to_numpy()
         predicted = subset[model_name].to_numpy()
-        persistence_rmse = float(
-            np.sqrt(mean_squared_error(actual, current))
-        )
         rmse = float(np.sqrt(mean_squared_error(actual, predicted)))
+        absolute_error = np.abs(actual - predicted)
         rows.append(
             {
                 "horizon": horizon,
@@ -165,17 +176,24 @@ def _metric_rows(
                 "rmse": rmse,
                 "mae": float(mean_absolute_error(actual, predicted)),
                 "mape": float(
-                    np.mean(np.abs((actual - predicted) / actual)) * 100.0
+                    np.mean(absolute_error / actual) * 100.0
+                ),
+                "smape": float(
+                    np.mean(
+                        2.0
+                        * absolute_error
+                        / (np.abs(actual) + np.abs(predicted))
+                    )
+                    * 100.0
+                ),
+                "nrmse_mean_pct": float(
+                    100.0 * rmse / np.mean(np.abs(actual))
                 ),
                 "direction_accuracy": float(
                     np.mean(
                         np.sign(predicted - current)
                         == np.sign(actual - current)
                     )
-                ),
-                "persistence_rmse": persistence_rmse,
-                "rmse_improvement_vs_persistence_pct": float(
-                    100.0 * (persistence_rmse - rmse) / persistence_rmse
                 ),
                 "windows": len(subset),
             }
@@ -188,7 +206,7 @@ def benchmark_sequence_models(
     max_steps: int,
     master_features: pd.DataFrame | None = None,
 ) -> SequenceBenchmarkResult:
-    """Train and compare TiDE, PatchTST and N-HiTS on identical windows."""
+    """Train sequence models on identical leakage-safe rolling windows."""
 
     from neuralforecast import NeuralForecast
 
@@ -200,7 +218,11 @@ def benchmark_sequence_models(
     metric_rows: list[dict[str, float | int | str]] = []
     fitted_forecasters: dict[str, object] = {}
     training_seconds: dict[str, float] = {}
-    log_price_by_ds = neural_frame.set_index("ds")["y"]
+    date_by_ds = pd.Series(sequence.index, index=neural_frame["ds"])
+    close_price_by_ds = pd.Series(
+        sequence["gold_close"].to_numpy(dtype=float),
+        index=neural_frame["ds"],
+    )
 
     for model_name in DEEP_FORECAST_MODELS:
         started = time.perf_counter()
@@ -220,17 +242,19 @@ def benchmark_sequence_models(
         rolling["step"] = rolling.groupby(
             ["unique_id", "cutoff"]
         ).cumcount() + 1
-        rolling["current_price"] = np.exp(
-            rolling["cutoff"].map(log_price_by_ds)
-        )
+        rolling["current_price"] = rolling["cutoff"].map(close_price_by_ds)
         rolling["actual_price"] = np.exp(rolling["y"])
         rolling[model_name] = np.exp(rolling[model_name])
+        rolling["cutoff_date"] = rolling["cutoff"].map(date_by_ds)
+        rolling["forecast_date"] = rolling["ds"].map(date_by_ds)
         rolling_frames.append(
             rolling[
                 [
                     "unique_id",
                     "ds",
                     "cutoff",
+                    "cutoff_date",
+                    "forecast_date",
                     "step",
                     "current_price",
                     "actual_price",
@@ -263,6 +287,8 @@ def benchmark_sequence_models(
                 "unique_id",
                 "ds",
                 "cutoff",
+                "cutoff_date",
+                "forecast_date",
                 "step",
                 "current_price",
                 "actual_price",

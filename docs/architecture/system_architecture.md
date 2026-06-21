@@ -11,13 +11,11 @@ flowchart LR
     B --> C["staging.daily_master"]
     C --> D["SQL feature tables"]
     D --> E["features.master_features"]
-    C --> F["features.target_labels"]
-    E --> G["Persistence baseline"]
-    E --> H["TiDE / PatchTST / N-HiTS"]
-    F --> G
-    F --> H
+    E --> H["Sequence models"]
+    E --> G["Direct horizon tabular models"]
     G --> I["Rolling evaluation + selection"]
-    H --> I
+    H --> I["Rolling evaluation + selection"]
+    C --> F["features.target_labels (EDA only)"]
     I --> J["10-session Open forecast"]
     J --> K["Filesystem artifacts"]
     J --> L["forecasting schema"]
@@ -33,7 +31,7 @@ flowchart LR
 | `sql/schema/` | DDL raw, staging, features, forecasting |
 | `sql/features/` | Feature và target generation |
 | `src/pipelines/` | Orchestration, validation, EDA, environment checks |
-| `src/modeling/` | Leakage guards, baseline, sequence models, explanations |
+| `src/modeling/` | Leakage guards, sequence/direct models, forecast formatting |
 | `src/experiments/` | Run ID, file/DB persistence, metadata |
 | `scripts/` | CLI entrypoints |
 
@@ -43,8 +41,8 @@ flowchart LR
 - Không dùng Polars trong production path: bottleneck là network, SQL và deep
   training; đổi DataFrame engine không tạo lợi ích đáng kể ở quy mô này.
 - Không import logic production từ `scripts/`; scripts chỉ là thin CLI.
-- Không giữ song song stack tabular target cũ; một forecast contract duy nhất
-  giảm drift giữa code, SQL và tài liệu.
+- Sequence và tabular models dùng chung một forecast contract, rolling origins,
+  horizons và artifact registry.
 - Feature SQL có thứ tự cố định để reproducible.
 - Forecasting history tách schema và không bị full refresh xóa.
 

@@ -27,8 +27,9 @@ def test_forecast_context_adds_direction_changes_and_three_reasons():
 
     result = add_forecast_context(predictions, features)
 
-    assert result.iloc[0]["forecast_direction"] == "TĂNG"
+    assert result.iloc[0]["forecast_direction"] == "UP"
     assert result.iloc[0]["predicted_change_amount"] == 2.0
     assert result.iloc[0]["predicted_change_pct"] == 2.0
     assert all(result.iloc[0][f"top_reason_{index}"] for index in range(1, 4))
+    assert "Real yield" in result.iloc[0]["top_reason_1"]
     assert result.iloc[0]["explanation_method"].endswith("non_causal")

@@ -36,12 +36,19 @@ DATA_END_DATE   = None           # None = đến ngày hôm nay
 
 OPEN_FORECAST_HORIZON = 10
 OPEN_FORECAST_RANDOM_SEED = 42
-OPEN_FORECAST_TEST_SIZE = 0.2
-OPEN_FORECAST_CV_SPLITS = 3
 OPEN_FORECAST_MODEL_CONFIG = {
-    "benchmark_family": "sequence_sliding_window",
-    "mandatory_models": ("TiDE", "PatchTST", "NHITS"),
-    "baseline": "persistence_close",
+    "benchmark_family": "hybrid_sequence_and_direct_tabular",
+    "mandatory_models": (
+        "TiDE",
+        "PatchTST",
+        "NHITS",
+        "DLinear",
+        "NLinear",
+        "RidgeDirect",
+        "XGBoostDirect",
+        "LightGBMDirect",
+        "RidgeXGBoostBlend",
+    ),
 }
 OPEN_FORECAST_FLAT_THRESHOLD_PCT = 0.05
 OPEN_TARGET_COLUMNS = tuple(
@@ -154,9 +161,16 @@ CFTC_CURRENT_URL = "https://www.cftc.gov/dea/newcot/f_disagg.txt"
 CFTC_GOLD_CONTRACT_CODE = "088691"
 CFTC_FIRST_DISAGGREGATED_YEAR = 2010
 
-# Sequence models are mandatory benchmark participants. N-HiTS is the
-# additional multi-resolution challenger.
-DEEP_FORECAST_MODELS = ("TiDE", "PatchTST", "NHITS")
+# Sequence benchmark: nonlinear deep models plus intentionally simple linear
+# challengers. DLinear/NLinear are important controls because simple linear
+# architectures can outperform transformers on small or shifting datasets.
+DEEP_FORECAST_MODELS = (
+    "TiDE",
+    "PatchTST",
+    "NHITS",
+    "DLinear",
+    "NLinear",
+)
 DEEP_FORECAST_HORIZONS = (1, 3, 5, 7, 10)
 DEEP_FORECAST_INPUT_SIZE = 252
 DEEP_FORECAST_VALIDATION_SIZE = 63
@@ -178,6 +192,91 @@ DEEP_FORECAST_HIST_EXOG = (
     "cftc_mm_net_pct_oi",
     "cftc_mm_net_change_pct_oi",
     "gld_volume_zscore_21d",
+)
+
+# Direct multi-horizon tabular models predict the log return from the current
+# close to each future open. This target is more stationary than the raw price
+# level and each horizon is trained independently to avoid recursive error.
+TABULAR_FORECAST_MODELS = (
+    "RidgeDirect",
+    "XGBoostDirect",
+    "LightGBMDirect",
+)
+TABULAR_FORECAST_ENSEMBLES = {
+    "RidgeXGBoostBlend": ("RidgeDirect", "XGBoostDirect"),
+}
+TABULAR_FORECAST_TRAINING_WINDOW = 1260  # approximately five trading years
+TABULAR_FORECAST_WINDOWS = (5, 10, 21, 63, 126, 252)
+TABULAR_FORECAST_LAGS = (1, 2, 3, 5, 10, 21, 63, 126, 252)
+TABULAR_FORECAST_BASE_FEATURES = (
+    "gold_open",
+    "gold_high",
+    "gold_low",
+    "gold_close",
+    "gold_volume",
+    "dxy_close",
+    "silver_close",
+    "wti_oil_price",
+    "brent_oil_price",
+    "sp500_close",
+    "vix",
+    "us_10y_yield",
+    "us_2y_yield",
+    "us_30y_yield",
+    "breakeven_inflation",
+    "yield_curve_slope",
+    "real_yield",
+    "us_10y_real_yield",
+    "gold_silver_ratio",
+    "gold_oil_ratio",
+    "gold_sp500_ratio",
+    "gold_dxy_ratio",
+    "oil_spread",
+    "dxy_return_5d",
+    "real_yield_change_5d",
+    "vix_change_5d",
+    "sp500_return_5d",
+    "gld_return_5d",
+    "gld_volume_zscore_21d",
+    "tlt_return_5d",
+    "uup_return_5d",
+    "tip_return_5d",
+    "hyg_return_5d",
+    "economic_policy_uncertainty",
+    "epu_zscore_63d",
+    "high_yield_spread",
+    "high_yield_spread_change_5d",
+    "cftc_mm_net_pct_oi",
+    "cftc_mm_net_change_pct_oi",
+    "cftc_producer_net_pct_oi",
+    "cftc_swap_net_pct_oi",
+    "cftc_mm_net_zscore_52w",
+    "cftc_positioning_age_days",
+    "month_sin",
+    "month_cos",
+    "year_sin",
+    "year_cos",
+    "month_progress",
+    "quarter_progress",
+    "year_progress",
+    "days_to_year_end",
+    "month_to_date_return",
+    "quarter_to_date_return",
+    "year_to_date_return",
+    "same_month_return_5d_mean",
+    "same_month_up_rate_5d",
+    "same_month_return_21d_mean",
+    "same_month_up_rate_21d",
+    "same_quarter_return_21d_mean",
+    "same_quarter_up_rate_21d",
+    "same_doy_return_5d_mean",
+    "same_doy_up_rate_5d",
+    "same_doy_return_10d_mean",
+    "same_doy_up_rate_10d",
+    "regime_return_5d_mean",
+    "regime_up_rate_5d",
+    "regime_return_10d_mean",
+    "regime_up_rate_10d",
 )
 
 

@@ -94,7 +94,7 @@ def remove_duplicates() -> None:
         try:
             _execute_sql(sql, label=f"dedup {table}")
         except Exception:
-            logger.exception("Lỗi dedup", extra={"table": table})
+            logger.exception("Deduplication failed", extra={"table": table})
 
 
 def fill_missing_staging(max_gap_days: int = 3) -> None:

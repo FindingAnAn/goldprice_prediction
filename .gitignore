@@ -85,6 +85,8 @@ data/**
 !data/**/.gitkeep
 models/open_forecast/
 !models/open_forecast/.gitkeep
+outputs/
+.spreadsheet_work/
 
 # IPython
 profile_default/

@@ -20,4 +20,6 @@ scipy>=1.12.0
 psutil>=5.9.0
 scikit-learn>=1.4.0
 joblib>=1.3.0
+xgboost>=3.0,<4
+lightgbm>=4.3,<5
 neuralforecast>=3.1,<4

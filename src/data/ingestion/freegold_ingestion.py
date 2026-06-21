@@ -120,7 +120,7 @@ def fetch_gold_yfinance(
     Returns:
         pd.DataFrame với columns ['date', 'price', 'source'].
     """
-    logger.info("Fetching GC=F từ yfinance", extra={"start": start})
+    logger.info("Fetching GC=F from yfinance", extra={"start": start})
 
     try:
         from src.data.ingestion.yfinance_ingestion import _exclusive_yfinance_end
@@ -133,7 +133,7 @@ def fetch_gold_yfinance(
             progress=False,
         )
         if raw.empty:
-            logger.warning("yfinance GC=F trả về DataFrame rỗng")
+            logger.warning("yfinance GC=F returned an empty DataFrame")
             return pd.DataFrame(columns=["date", "price", "source"])
 
         close = raw["Close"].squeeze()
@@ -149,7 +149,7 @@ def fetch_gold_yfinance(
         )
         return df
     except Exception:
-        logger.exception("Lỗi khi fetch GC=F từ yfinance")
+        logger.exception("Failed to fetch GC=F from yfinance")
         return pd.DataFrame(columns=["date", "price", "source"])
 
 
@@ -187,7 +187,7 @@ def ingest_gold_prices(
             )
             total += n
     except Exception:
-        logger.exception("Lỗi ingest FreeGoldAPI")
+        logger.exception("FreeGoldAPI ingestion failed")
 
     # yfinance GC=F
     try:
@@ -201,7 +201,10 @@ def ingest_gold_prices(
             )
             total += n
     except Exception:
-        logger.exception("Lỗi ingest yfinance GC=F")
+        logger.exception("yfinance GC=F ingestion failed")
 
-    logger.info("ingest_gold_prices hoàn tất", extra={"total_upserted": total})
+    logger.info(
+        "Gold price ingestion completed",
+        extra={"total_upserted": total},
+    )
     return total

@@ -8,8 +8,8 @@ benchmark theo thời gian và lưu đầy đủ log, metric, model, dự báo v
 
 - Cutoff dự báo: sau khi phiên vàng hiện tại đã hoàn tất.
 - Target: `next_1_day_open` đến `next_10_day_open`.
-- Baseline: giá Close hiện tại lặp lại cho 10 phiên.
-- Mô hình sequence bắt buộc: TiDE, PatchTST và N-HiTS.
+- Benchmark sequence: TiDE, PatchTST, N-HiTS, DLinear và NLinear.
+- Benchmark tabular trực tiếp: Ridge, XGBoost, LightGBM và Ridge-XGBoost blend.
 - Chọn model: RMSE trung bình trên rolling windows tại horizon 1, 3, 5, 7, 10.
 - Lịch sử: từ `2010-01-01` để đồng bộ CFTC Disaggregated COT.
 - Mỗi lần chạy full pipeline: truncate `raw`, `staging`, `features`; schema
@@ -62,7 +62,7 @@ python scripts/run_open_forecast.py
 Tham số giảm thời gian smoke test:
 
 ```powershell
-python scripts/run_open_forecast.py --deep-windows 2 --deep-max-steps 2
+python scripts/run_open_forecast.py --windows 2 --max-steps 2
 ```
 
 Các lệnh độc lập:
@@ -107,14 +107,18 @@ vintage/release timestamp point-in-time.
 
 - OHLCV, return, gap, range và close location.
 - SMA, EMA, Bollinger, RSI, MACD, ADX, ROC, CCI, stochastic.
-- Sliding windows 5/21/63/252 phiên và EWMA 7/30/90/365 ngày.
+- Sliding windows 5/10/21/63/126/252 phiên cho return, volatility, trend,
+  drawdown/rebound; EWMA 7/30/90/365 ngày.
 - DXY, nominal/real yield, VIX, S&P 500, silver, oil và các tỷ lệ liên thị trường.
 - GLD/TLT/UUP/TIP/HYG return và GLD volume z-score.
 - Economic Policy Uncertainty và CFTC positioning.
 - Month/quarter/year progress, same-month, same-quarter, day-of-year analog và
   market-regime analog.
 
-Sequence model chỉ nhận feature có độ phủ tối thiểu 80%. Credit spread
+Sequence model chỉ nhận feature có độ phủ tối thiểu 80%. Direct tabular model
+dự báo riêng từng horizon bằng target
+`log(future_open/current_close)` và chỉ học trên rolling window 1.260 phiên.
+Credit spread
 `BAMLH0A0HYM2` vẫn được lưu để phân tích nhưng không ép vào sequence model vì
 FRED hiện chỉ phân phối khoảng ba năm lịch sử cho series này.
 
@@ -130,15 +134,14 @@ data/predictions/open_10d/<run_id>/
 ├── leaderboard.csv
 ├── metrics.csv
 ├── open_predictions.csv
-├── holdout_predictions.csv
-├── deep_model_metrics.csv
-├── deep_model_predictions.csv
-├── deep_model_future_predictions.csv
+├── benchmark_metrics.csv
+├── rolling_predictions.csv
+├── future_predictions_all_models.csv
+├── feature_importance.csv
 ├── resource_metrics.csv
 ├── stage_metrics.csv
 ├── feature_columns.json
-├── model.joblib
-└── deep_models/
+└── models/
 ```
 
 Kết quả cũng được lưu trong schema PostgreSQL `forecasting`:
@@ -151,9 +154,9 @@ Kết quả cũng được lưu trong schema PostgreSQL `forecasting`:
 - `resource_metrics`
 
 `open_predictions.csv` và bảng DB gồm giá dự báo, khoảng sai số 80%/95%, chênh
-lệch tuyệt đối/phần trăm so với Close hiện tại, hướng tăng/giảm/đi ngang và ba
-lý do kinh tế. Các lý do là **evidence theo rule**, không phải causal attribution
-hay SHAP.
+lệch tuyệt đối/phần trăm so với Close hiện tại, hướng `UP`/`DOWN`/`FLAT` và ba
+lý do kinh tế bằng tiếng Anh. Các lý do là **evidence theo rule**, không phải
+causal attribution hay SHAP.
 
 ## Kiểm soát data leakage
 
@@ -161,6 +164,8 @@ hay SHAP.
   `features.master_features`.
 - Split chronological có purge gap 10 phiên.
 - Rolling validation không shuffle.
+- Direct horizon `h` chỉ train đến origin `cutoff - h`; label sau cutoff không
+  được sử dụng.
 - Feature future có prefix `next_<n>_day_` bị chặn tự động.
 - CFTC chỉ join sau `available_date`.
 - Seasonal analog chỉ dùng quan sát ít nhất một năm trước ngày dự báo.
@@ -177,7 +182,7 @@ sql/schema/              DDL PostgreSQL
 sql/features/            feature engineering SQL
 src/data/ingestion/      API clients
 src/data/storage/        PostgreSQL utilities
-src/modeling/            baseline, sequence benchmark, explanation
+src/modeling/            sequence + direct tabular benchmark, forecast/explanation
 src/pipelines/           ingestion, EDA, environment checks
 src/experiments/         run tracking và artifact persistence
 tests/unit/              unit tests
@@ -190,8 +195,8 @@ Kiến trúc: [system_architecture.md](docs/architecture/system_architecture.md)
 
 ## Giới hạn
 
-- Dự báo giá vàng là bài toán nhiễu cao; persistence là baseline bắt buộc và có
-  thể thắng deep model trong một số giai đoạn.
+- Dự báo giá vàng là bài toán nhiễu cao; model tốt nhất trong benchmark vẫn
+  có thể không tạo giá trị dự báo thực tế nếu RMSE/direction accuracy yếu.
 - `forecast_date` dùng US federal business day, chưa phải lịch CME chính thức.
 - Daily FRED được lag một ngày nhưng chưa dùng ALFRED vintage; vẫn còn revision
   risk cho nghiên cứu lịch sử.

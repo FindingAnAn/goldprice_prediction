@@ -137,7 +137,10 @@ def upsert_dataframe(
         psycopg2.Error: Nếu lỗi database.
     """
     if df is None or df.empty:
-        logger.warning("upsert_dataframe: DataFrame rỗng, bỏ qua.", extra={"table": f"{schema}.{table}"})
+        logger.warning(
+            "Upsert skipped because the DataFrame is empty",
+            extra={"table": f"{schema}.{table}"},
+        )
         return 0
 
     df = _prepare_dataframe_for_upsert(df)
@@ -175,7 +178,7 @@ def upsert_dataframe(
         conn.commit()
 
     logger.info(
-        "Upsert hoàn tất",
+        "Upsert completed",
         extra={"table": f"{schema}.{table}", "rows": len(rows)},
     )
     return len(rows)
@@ -466,7 +469,7 @@ def _run_ordered_sql_dir(
                 f"Missing ordered SQL files in {directory}: {missing_files}"
             )
     if not sql_files:
-        logger.warning("Không tìm thấy .sql file nào", extra={"dir": str(directory)})
+        logger.warning("No SQL files found", extra={"dir": str(directory)})
         return
 
     logger.info(

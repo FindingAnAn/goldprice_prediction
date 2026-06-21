@@ -4,23 +4,10 @@ import numpy as np
 import pandas as pd
 
 from src.modeling.open_forecast import (
-    MultiHorizonPersistenceRegressor,
+    build_sequence_forecast_frame,
     next_estimated_session_dates,
 )
 from src.modeling.time_series import infer_feature_columns
-
-
-def test_multi_horizon_persistence_repeats_current_close():
-    X = np.array([[100.0, 1.0], [200.0, 2.0]])
-    model = MultiHorizonPersistenceRegressor(
-        current_price_index=0,
-        horizon=3,
-    ).fit(X, np.zeros((2, 3)))
-
-    np.testing.assert_allclose(
-        model.predict(X),
-        np.array([[100.0, 100.0, 100.0], [200.0, 200.0, 200.0]]),
-    )
 
 
 def test_open_targets_are_never_inferred_as_features():
@@ -42,3 +29,30 @@ def test_future_session_dates_skip_weekend_and_us_federal_holiday():
         "2026-06-22",
         "2026-06-23",
     ]
+
+
+def test_build_sequence_forecast_uses_selected_model_and_residuals():
+    future = pd.DataFrame(
+        {
+            "step": range(1, 11),
+            "TiDE": np.arange(101.0, 111.0),
+        }
+    )
+    rolling = pd.DataFrame(
+        {
+            "step": list(range(1, 11)) * 2,
+            "actual_price": np.arange(100.0, 120.0),
+            "TiDE": np.arange(99.0, 119.0),
+        }
+    )
+
+    result = build_sequence_forecast_frame(
+        selected_model="TiDE",
+        future_predictions=future,
+        rolling_predictions=rolling,
+        as_of_date=pd.Timestamp("2026-06-19"),
+    )
+
+    assert len(result) == 10
+    assert result.iloc[0]["predicted_open"] == 101.0
+    assert result.iloc[0]["lower_80"] == 100.0

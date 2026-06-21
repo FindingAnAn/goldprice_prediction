@@ -102,7 +102,7 @@ def _fetch_from_yfinance(
         logger.info("yfinance fallback OK", extra={"symbol": symbol, "rows": len(df)})
         return df
     except Exception:
-        logger.exception("yfinance fallback lỗi", extra={"symbol": symbol})
+        logger.exception("yfinance fallback failed", extra={"symbol": symbol})
         return pd.DataFrame()
 
 
@@ -132,7 +132,10 @@ def ingest_eia_with_fallback(
                 )
                 logger.info("EIA series fetched", extra={"series_id": series_id, "rows": len(df)})
             except Exception:
-                logger.exception("EIA series lỗi, thử yfinance fallback", extra={"series_id": series_id})
+                logger.exception(
+                    "EIA series failed; trying the yfinance fallback",
+                    extra={"series_id": series_id},
+                )
 
         if df.empty:
             yf_symbol = fallback_map.get(series_id)
@@ -140,7 +143,10 @@ def ingest_eia_with_fallback(
                 df = _fetch_from_yfinance(yf_symbol, series_id, start, end)
 
         if df.empty:
-            logger.error("Không có data cho oil series", extra={"series_id": series_id})
+            logger.error(
+                "No data available for the oil series",
+                extra={"series_id": series_id},
+            )
             results[series_id] = 0
             continue
 
@@ -148,7 +154,10 @@ def ingest_eia_with_fallback(
             n = upsert_dataframe(df, table="eia_oil", schema=PG_SCHEMA_RAW, conflict_cols=["date", "series_id"])
             results[series_id] = n
         except Exception:
-            logger.exception("Lỗi upsert EIA oil", extra={"series_id": series_id})
+            logger.exception(
+                "EIA oil upsert failed",
+                extra={"series_id": series_id},
+            )
             results[series_id] = -1
 
     logger.info("ingest_eia_with_fallback done", extra={"results": results})

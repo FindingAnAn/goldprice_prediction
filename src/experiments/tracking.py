@@ -34,13 +34,11 @@ class RunPaths:
     resources: Path
     stages: Path
     feature_list: Path
-    holdout_predictions: Path
-    deep_model_metrics: Path
-    deep_model_predictions: Path
-    deep_model_future_predictions: Path
-    deep_model_directory: Path
-    model: Path
-    holdout_model: Path
+    benchmark_metrics: Path
+    rolling_predictions: Path
+    future_predictions: Path
+    feature_importance: Path
+    model_directory: Path
 
 
 def generate_run_id(prefix: str = "gold_open_10d") -> str:
@@ -66,15 +64,11 @@ def create_run_paths(
         resources=directory / "resource_metrics.csv",
         stages=directory / "stage_metrics.csv",
         feature_list=directory / "feature_columns.json",
-        holdout_predictions=directory / "holdout_predictions.csv",
-        deep_model_metrics=directory / "deep_model_metrics.csv",
-        deep_model_predictions=directory / "deep_model_predictions.csv",
-        deep_model_future_predictions=(
-            directory / "deep_model_future_predictions.csv"
-        ),
-        deep_model_directory=directory / "deep_models",
-        model=directory / "model.joblib",
-        holdout_model=directory / "model_holdout.joblib",
+        benchmark_metrics=directory / "benchmark_metrics.csv",
+        rolling_predictions=directory / "rolling_predictions.csv",
+        future_predictions=directory / "future_predictions_all_models.csv",
+        feature_importance=directory / "feature_importance.csv",
+        model_directory=directory / "models",
     )
 
 
@@ -90,12 +84,14 @@ def library_versions() -> dict[str, str]:
         "pandas",
         "numpy",
         "scikit-learn",
-        "joblib",
         "sqlalchemy",
         "psycopg2-binary",
         "psutil",
         "neuralforecast",
         "torch",
+        "joblib",
+        "xgboost",
+        "lightgbm",
     )
     versions = {"python": platform.python_version()}
     for package in packages:
@@ -197,11 +193,6 @@ def save_candidates(run_id: str, candidates: pd.DataFrame) -> None:
             bool(row.selected),
             Json(row.parameters if isinstance(row.parameters, dict) else {}),
             nullable_number(row.cv_rmse),
-            nullable_number(row.holdout_rmse),
-            nullable_number(row.holdout_mae),
-            nullable_number(row.holdout_mape),
-            nullable_number(row.holdout_r2),
-            nullable_number(row.rmse_improvement_vs_persistence_pct),
             nullable_number(row.training_seconds),
             row.artifact_path,
         )
@@ -210,20 +201,12 @@ def save_candidates(run_id: str, candidates: pd.DataFrame) -> None:
     sql = """
         INSERT INTO forecasting.model_candidates (
             run_id, model_name, selected, parameters, cv_rmse,
-            holdout_rmse, holdout_mae, holdout_mape, holdout_r2,
-            rmse_improvement_vs_persistence_pct,
             training_seconds, artifact_path
         ) VALUES %s
         ON CONFLICT (run_id, model_name) DO UPDATE SET
             selected = EXCLUDED.selected,
             parameters = EXCLUDED.parameters,
             cv_rmse = EXCLUDED.cv_rmse,
-            holdout_rmse = EXCLUDED.holdout_rmse,
-            holdout_mae = EXCLUDED.holdout_mae,
-            holdout_mape = EXCLUDED.holdout_mape,
-            holdout_r2 = EXCLUDED.holdout_r2,
-            rmse_improvement_vs_persistence_pct =
-                EXCLUDED.rmse_improvement_vs_persistence_pct,
             training_seconds = EXCLUDED.training_seconds,
             artifact_path = EXCLUDED.artifact_path
     """
@@ -353,9 +336,7 @@ def save_resources(run_id: str, resources: dict[str, float | int]) -> None:
         "read_bytes": "bytes",
         "write_bytes": "bytes",
         "samples": "count",
-        "model_size_bytes": "bytes",
-        "holdout_model_size_bytes": "bytes",
-        "deep_model_size_bytes": "bytes",
+        "model_artifact_size_bytes": "bytes",
         "prediction_rows_per_second": "rows_per_second",
     }
     rows = [

@@ -17,7 +17,7 @@ prepare schema
   -> build staging + clean
   -> build SQL features + targets
   -> load training frame
-  -> persistence + TiDE + PatchTST + N-HiTS
+  -> sequence models + direct tabular models
   -> rolling evaluation và model selection
   -> refit production models
   -> forecast 10 Open
@@ -54,16 +54,14 @@ python scripts/run_open_forecast.py
 
 Mặc định:
 
-- `--deep-windows 6`
-- `--deep-max-steps 100`
-- `--test-size 0.2`
-- `--cv-splits 3`
-- `--random-seed 42`
+- `--windows 6`
+- `--max-steps 100`
+- random seed `42`
 
 Smoke test:
 
 ```powershell
-python scripts/run_open_forecast.py --deep-windows 2 --deep-max-steps 2
+python scripts/run_open_forecast.py --windows 2 --max-steps 2
 ```
 
 ### Chỉ rebuild feature
@@ -121,16 +119,23 @@ Thứ tự SQL cố định:
 
 ## 6. Modeling
 
-### Baseline
-
-`persistence_close` lặp Close hiện tại cho 10 Open tương lai. Đây là baseline
-thực tế bắt buộc.
-
 ### Sequence models
 
 - TiDE: multivariate historical exogenous.
 - PatchTST: univariate theo implementation NeuralForecast hiện tại.
 - N-HiTS: multivariate, multi-resolution.
+- DLinear/NLinear: univariate linear sequence controls.
+
+### Direct tabular models
+
+- RidgeDirect;
+- XGBoostDirect;
+- LightGBMDirect;
+- RidgeXGBoostBlend.
+
+Mỗi horizon 1–10 có estimator riêng, target là
+`log(future_open/current_close)`. Training dùng sliding window 1.260 phiên và
+feature windows 5/10/21/63/126/252 phiên.
 
 Thiết lập chuẩn:
 
@@ -143,8 +148,7 @@ Thiết lập chuẩn:
 - exogenous coverage tối thiểu: 80%;
 - rolling windows không shuffle.
 
-Model được chọn theo mean rolling RMSE. Holdout metric vẫn được lưu nhưng không
-dùng để tuning/chọn deep model.
+Model được chọn theo mean rolling RMSE trên cùng sáu cửa sổ đánh giá.
 
 ## 7. Logging và artifact
 
@@ -189,7 +193,7 @@ Một run đạt yêu cầu khi:
 
 - `model_runs.status = completed`;
 - có đúng 10 dòng forecast;
-- có đủ 4 candidates: persistence, TiDE, PatchTST, N-HiTS;
+- có đủ sequence, direct tabular và fixed-weight ensemble candidates;
 - có metric theo horizon;
 - model artifacts reload/predict giống trước khi lưu;
 - log và resource metrics tồn tại;

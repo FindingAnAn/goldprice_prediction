@@ -46,11 +46,6 @@ CREATE TABLE IF NOT EXISTS forecasting.model_candidates (
     selected                BOOLEAN NOT NULL DEFAULT FALSE,
     parameters              JSONB NOT NULL DEFAULT '{}'::JSONB,
     cv_rmse                 DOUBLE PRECISION,
-    holdout_rmse            DOUBLE PRECISION,
-    holdout_mae             DOUBLE PRECISION,
-    holdout_mape            DOUBLE PRECISION,
-    holdout_r2              DOUBLE PRECISION,
-    rmse_improvement_vs_persistence_pct DOUBLE PRECISION,
     training_seconds        DOUBLE PRECISION,
     artifact_path           TEXT,
     PRIMARY KEY (run_id, model_name)
@@ -122,8 +117,11 @@ CREATE INDEX IF NOT EXISTS idx_open_predictions_forecast_date
     ON forecasting.open_predictions (forecast_date);
 
 ALTER TABLE forecasting.model_candidates
-    ADD COLUMN IF NOT EXISTS rmse_improvement_vs_persistence_pct
-        DOUBLE PRECISION;
+    DROP COLUMN IF EXISTS rmse_improvement_vs_persistence_pct,
+    DROP COLUMN IF EXISTS holdout_rmse,
+    DROP COLUMN IF EXISTS holdout_mae,
+    DROP COLUMN IF EXISTS holdout_mape,
+    DROP COLUMN IF EXISTS holdout_r2;
 
 ALTER TABLE forecasting.open_predictions
     ADD COLUMN IF NOT EXISTS reference_close DOUBLE PRECISION,
